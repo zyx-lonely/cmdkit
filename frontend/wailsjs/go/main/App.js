@@ -6,8 +6,16 @@ export function CancelExecution() {
   return window['go']['main']['App']['CancelExecution']();
 }
 
+export function CheckUpdate() {
+  return window['go']['main']['App']['CheckUpdate']();
+}
+
 export function DockerAction(arg1, arg2) {
   return window['go']['main']['App']['DockerAction'](arg1, arg2);
+}
+
+export function DockerExecTerminal(arg1, arg2) {
+  return window['go']['main']['App']['DockerExecTerminal'](arg1, arg2);
 }
 
 export function DockerLogs(arg1) {
@@ -42,6 +50,10 @@ export function GetChineseSearchMap() {
   return window['go']['main']['App']['GetChineseSearchMap']();
 }
 
+export function GetCrontabContent() {
+  return window['go']['main']['App']['GetCrontabContent']();
+}
+
 export function GetCurrentDistro() {
   return window['go']['main']['App']['GetCurrentDistro']();
 }
@@ -66,6 +78,10 @@ export function GetNote(arg1) {
   return window['go']['main']['App']['GetNote'](arg1);
 }
 
+export function GetProcessTree() {
+  return window['go']['main']['App']['GetProcessTree']();
+}
+
 export function GetSysStats() {
   return window['go']['main']['App']['GetSysStats']();
 }
@@ -76,6 +92,14 @@ export function GetSystemInfo() {
 
 export function ImportNotes(arg1) {
   return window['go']['main']['App']['ImportNotes'](arg1);
+}
+
+export function KillProcess(arg1) {
+  return window['go']['main']['App']['KillProcess'](arg1);
+}
+
+export function SaveCrontab(arg1) {
+  return window['go']['main']['App']['SaveCrontab'](arg1);
 }
 
 export function SaveNote(arg1, arg2) {

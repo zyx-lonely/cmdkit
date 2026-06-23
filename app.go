@@ -1154,6 +1154,71 @@ func (a *App) GetSysStats() SysStats {
 	return s
 }
 
+func (a *App) CheckUpdate() string {
+	type Release struct {
+		TagName string `json:"tag_name"`
+		Body    string `json:"body"`
+		HTMLURL string `json:"html_url"`
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get("https://api.github.com/repos/zyx-lonely/cmdkit/releases/latest")
+	if err != nil {
+		return `{"error":"` + err.Error() + `"}`
+	}
+	defer resp.Body.Close()
+	var r Release
+	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+		return `{"error":"` + err.Error() + `"}`
+	}
+	b, _ := json.Marshal(r)
+	return string(b)
+}
+
+func (a *App) GetProcessTree() string {
+	out := run("sh", "-c", `ps aux --sort=-%cpu | head -50 | awk '{print $2","$11","$3","$4","$1","$6}'`)
+	lines := strings.Split(out, "\n")
+	type Proc struct {
+		PID  string `json:"pid"`
+		Cmd  string `json:"cmd"`
+		CPU  string `json:"cpu"`
+		Mem  string `json:"mem"`
+		User string `json:"user"`
+		RSS  string `json:"rss"`
+	}
+	var procs []Proc
+	for _, l := range lines {
+		parts := strings.Split(l, ",")
+		if len(parts) >= 6 {
+			procs = append(procs, Proc{PID: parts[0], Cmd: parts[1], CPU: parts[2], Mem: parts[3], User: parts[4], RSS: parts[5]})
+		}
+	}
+	b, _ := json.Marshal(procs)
+	return string(b)
+}
+
+func (a *App) KillProcess(pid string) ExecResult {
+	return runExec("kill", "-9", pid)
+}
+
+func (a *App) GetCrontabContent() string {
+	out := run("sh", "-c", "crontab -l 2>/dev/null || echo '无定时任务'")
+	return out
+}
+
+func (a *App) SaveCrontab(content string) ExecResult {
+	cmd := exec.Command("crontab", "-")
+	cmd.Stdin = strings.NewReader(content)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	return ExecResult{Success: err == nil, Output: strings.TrimSpace(stdout.String()), Error: strings.TrimSpace(stderr.String())}
+}
+
+func (a *App) DockerExecTerminal(containerID, shellCmd string) ExecResult {
+	return runExec("sh", "-c", "docker exec -i "+containerID+" "+shellCmd+" 2>/dev/null || docker exec -i "+containerID+" sh -c \""+shellCmd+"\"")
+}
+
 func (a *App) TestSSH(host, port, user, keyPath string) ExecResult {
 	args := []string{"-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=5", "-p", port}
 	if keyPath != "" {

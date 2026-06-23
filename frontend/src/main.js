@@ -1,4 +1,4 @@
-import { GetCategories, GetGuides, ExecuteCommand, CancelExecution, GetChineseSearchMap, GetSystemInfo, FetchURL, SaveNote, GetNote, GetAllNotes, ImportNotes, GetDockerContainers, DockerAction, DockerLogs, GetSysStats, TestSSH, GetCurrentDistro, GetDistroInfo, GetGuidedSteps, GetBeginnerPath } from '../wailsjs/go/main/App.js'
+import { GetCategories, GetGuides, ExecuteCommand, CancelExecution, GetChineseSearchMap, GetSystemInfo, FetchURL, SaveNote, GetNote, GetAllNotes, ImportNotes, GetDockerContainers, DockerAction, DockerLogs, GetSysStats, TestSSH, GetCurrentDistro, GetDistroInfo, GetGuidedSteps, GetBeginnerPath, CheckUpdate, GetProcessTree, KillProcess, GetCrontabContent, SaveCrontab, DockerExecTerminal } from '../wailsjs/go/main/App.js'
 
 let allCategories = []
 let allGuides = []
@@ -9,6 +9,7 @@ let activeRole = 'all'
 let currentCmdName = ''
 let sysMonitorTimer = null
 let dockerTimer = null
+let procTimer = null
 
 function stopAllTimers() {
   if (sysMonitorTimer) { clearInterval(sysMonitorTimer); sysMonitorTimer = null }
@@ -23,10 +24,13 @@ function save(key, val) { localStorage.setItem(key, JSON.stringify(val)) }
 // state
 let execHistory = load('execHistory', []).map(e => typeof e === 'string' ? { cmd: e, time: Date.now() } : e)
 let favs = load('favs', [])
+let favCats = load('favCats', {}) // { cmdName: 'catName' }
 let sshHosts = load('sshHosts', [])
 let aliases = load('aliases', [])
 let themeColor = load('themeColor', '')
 let lastSearchQuery = ''
+let activeFavCat = ''
+let activeDifficulty = 'all'
 
 let flatCommands = []
 let searchHistory = load('searchHistory', [])
@@ -160,6 +164,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   updateFavCount()
   updateDistroBadge()
   showOnboarding()
+  checkForUpdates()
+  setupAutoTheme()
 })
 
 function applyTheme() {
@@ -218,12 +224,13 @@ function renderView() {
     ssh: renderSSH,
     aliases: renderAliases,
     beginner: renderBeginnerPath,
+    proc: renderProcessView,
   }
   if (views[activeView]) views[activeView]()
   updateButtonStates()
 }
 function hideAllViews() {
-  ;['commands-grid','guides-container','sysinfo-container','docker-container','ssh-container','aliases-container'].forEach(id => {
+  ;['commands-grid','guides-container','sysinfo-container','docker-container','ssh-container','aliases-container','process-container'].forEach(id => {
     document.getElementById(id).style.display = 'none'
   })
 }
@@ -239,6 +246,7 @@ function updateButtonStates() {
   else if (activeView === 'beginner') $('#btn-beginner').classList.add('active')
   $('#btn-docker').classList.toggle('active', activeView === 'docker')
   $('#btn-ssh').classList.toggle('active', activeView === 'ssh')
+  $('#btn-proc')?.classList.toggle('active', activeView === 'proc')
   $$('#category-list button').forEach(b => b.classList.toggle('active', parseInt(b.dataset.idx) === activeCategory))
 }
 
@@ -246,12 +254,18 @@ function updateButtonStates() {
 function renderCommands() {
   const grid = $('#commands-grid')
   grid.style.display = 'grid'
+  grid.style.gridTemplateColumns = ''
   $('#view-title').textContent = activeCategory === -1 ? '全部命令' : allCategories[activeCategory].name
+  // Insert filter chips
+  let existingFilters = grid.querySelector('.search-filter-row')
+  grid.innerHTML = renderFilterChips()
+  const chipRow = grid.querySelector('.search-filter-row')
   let cmds = activeCategory === -1
     ? flatCommands.slice()
     : allCategories[activeCategory].commands.map(cmd => ({ ...cmd, catName: allCategories[activeCategory].name }))
   cmds = filterByRoleCommands(cmds)
   cmds = filterByDistro(cmds)
+  cmds = filterByDifficulty(cmds)
   const q = $('#search-input').value.trim().toLowerCase()
   lastSearchQuery = q
   if (q) {
@@ -271,7 +285,15 @@ function renderCommands() {
     cmds = matched
   }
   $('#view-count').textContent = cmds.length + ' 条'
-  renderCommandCards(grid, cmds, '🔍')
+  const cardsContainer = document.createElement('div')
+  cardsContainer.style.cssText = 'display:contents'
+  grid.appendChild(cardsContainer)
+  renderCommandCards(cardsContainer, cmds, '🔍')
+}
+
+function filterByDifficulty(cmds) {
+  if (activeDifficulty === 'all') return cmds
+  return cmds.filter(c => c.difficulty === activeDifficulty)
 }
 
 function renderCommandCards(grid, cmds, emptyIcon) {
@@ -555,12 +577,13 @@ async function renderDockerTable(container, silent) {
       <td>${c.image}</td>
       <td><span class="docker-status ${statusCls}">${c.status}</span></td>
       <td style="font-size:11px">${c.ports || '-'}</td>
-      <td style="white-space:nowrap">
-        <button class="cmd-btn docker-act" data-id="${c.id}" data-act="start">▶ 启动</button>
-        <button class="cmd-btn docker-act" data-id="${c.id}" data-act="stop">⏹ 停止</button>
-        <button class="cmd-btn docker-act" data-id="${c.id}" data-act="restart">🔄 重启</button>
-      </td>
-      <td><button class="cmd-btn docker-logs" data-id="${c.id}">日志</button></td>
+        <td style="white-space:nowrap">
+          <button class="cmd-btn docker-act" data-id="${c.id}" data-act="start">▶ 启动</button>
+          <button class="cmd-btn docker-act" data-id="${c.id}" data-act="stop">⏹ 停止</button>
+          <button class="cmd-btn docker-act" data-id="${c.id}" data-act="restart">🔄 重启</button>
+          <button class="docker-exec-btn" data-id="${c.id}" data-name="${c.name}">💻 执行</button>
+        </td>
+        <td><button class="cmd-btn docker-logs" data-id="${c.id}">日志</button></td>
     </tr>`
   })
   html += '</tbody></table>'
@@ -577,6 +600,9 @@ async function renderDockerTable(container, silent) {
       const logs = await DockerLogs(el.dataset.id)
       openExec(logs || '无日志')
     })
+  })
+  container.querySelectorAll('.docker-exec-btn').forEach(el => {
+    el.addEventListener('click', () => dockerExecTerminal(el.dataset.id, el.dataset.name))
   })
 }
 
@@ -1084,6 +1110,35 @@ function showOnboarding() {
   })
 }
 
+// --- Check Update ---
+async function checkForUpdates() {
+  try {
+    const raw = await CheckUpdate()
+    const rel = JSON.parse(raw)
+    if (rel.error) return
+    const cur = 'v1.0.0'
+    if (rel.tag_name && rel.tag_name > cur) {
+      toast(`📦 新版本 ${rel.tag_name} 可用！前往 GitHub 下载`)
+    }
+  } catch (e) { /* ignore */ }
+}
+
+// --- Auto Theme ---
+function setupAutoTheme() {
+  const mq = window.matchMedia('(prefers-color-scheme: light)')
+  const stored = localStorage.getItem('theme')
+  if (!stored) {
+    document.documentElement.setAttribute('data-theme', mq.matches ? 'light' : 'dark')
+    $('#theme-toggle').textContent = mq.matches ? '☀️' : '🌙'
+  }
+  mq.addEventListener('change', (e) => {
+    if (!localStorage.getItem('theme')) {
+      document.documentElement.setAttribute('data-theme', e.matches ? 'light' : 'dark')
+      $('#theme-toggle').textContent = e.matches ? '☀️' : '🌙'
+    }
+  })
+}
+
 // --- Bind Events ---
 function bindEvents() {
   // Theme
@@ -1181,6 +1236,27 @@ function bindEvents() {
     $('#more-menu').style.display = 'none'
     exportPDF()
   })
+  $('#menu-compare').addEventListener('click', () => {
+    $('#more-menu').style.display = 'none'
+    openCompare()
+  })
+  $('#menu-pipeline').addEventListener('click', () => {
+    $('#more-menu').style.display = 'none'
+    openPipeline()
+  })
+  $('#menu-crontab').addEventListener('click', () => {
+    $('#more-menu').style.display = 'none'
+    openCrontab()
+  })
+  $('#menu-import').addEventListener('click', () => {
+    $('#more-menu').style.display = 'none'
+    $('#import-overlay').classList.add('show')
+    $('#import-file').value = ''
+  })
+  $('#import-close').addEventListener('click', () => $('#import-overlay').classList.remove('show'))
+  $('#import-overlay').addEventListener('click', (e) => { if (e.target === e.currentTarget) $('#import-overlay').classList.remove('show') })
+  $('#import-cancel').addEventListener('click', () => $('#import-overlay').classList.remove('show'))
+  $('#import-confirm').addEventListener('click', handleImport)
 
   // Search (debounced)
   $('#search-input').addEventListener('input', () => {
@@ -1300,6 +1376,253 @@ function bindEvents() {
   $('#guided-overlay').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) $('#guided-overlay').classList.remove('show')
   })
+
+  // Compare
+  $('#compare-close').addEventListener('click', () => $('#compare-overlay').classList.remove('show'))
+  $('#compare-overlay').addEventListener('click', (e) => { if (e.target === e.currentTarget) $('#compare-overlay').classList.remove('show') })
+
+  // Pipeline
+  $('#pipeline-close').addEventListener('click', () => $('#pipeline-overlay').classList.remove('show'))
+  $('#pipeline-overlay').addEventListener('click', (e) => { if (e.target === e.currentTarget) $('#pipeline-overlay').classList.remove('show') })
+  $('#pipeline-add').addEventListener('click', () => { addPipelineStep(); updatePipelinePreview() })
+  $('#pipeline-run').addEventListener('click', () => {
+    const inputs = document.querySelectorAll('.p-step-input')
+    const parts = Array.from(inputs).map(inp => inp.value.trim()).filter(Boolean)
+    if (!parts.length) { toast('请添加至少一个命令'); return }
+    $('#pipeline-overlay').classList.remove('show')
+    openExec(parts.join(' | '))
+  })
+
+  // Crontab
+  $('#crontab-close').addEventListener('click', () => $('#crontab-overlay').classList.remove('show'))
+  $('#crontab-overlay').addEventListener('click', (e) => { if (e.target === e.currentTarget) $('#crontab-overlay').classList.remove('show') })
+  ;['cr-min','cr-hour','cr-day','cr-month','cr-week','cr-cmd'].forEach(id => {
+    $(`#${id}`).addEventListener('input', updateCrontabPreview)
+  })
+  $('#cr-save').addEventListener('click', saveCrontab)
+
+  // Palette
+  $('#palette-overlay').addEventListener('click', (e) => { if (e.target === e.currentTarget) $('#palette-overlay').classList.remove('show') })
+  $('#palette-input').addEventListener('input', () => filterPalette($('#palette-input').value))
+  $('#palette-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') $('#palette-overlay').classList.remove('show')
+    if (e.key === 'Enter') {
+      const first = $('#palette-results .sug-item:first-child')
+      if (first) { $('#palette-overlay').classList.remove('show'); const s = first.dataset.syntax; if (s) openExec(s) }
+    }
+  })
+
+  // Process button in bottom bar
+  const bottomBar = document.querySelector('#bottom-bar')
+  const procBtn = document.createElement('button')
+  procBtn.id = 'btn-proc'; procBtn.textContent = '⚙️ 进程'
+  bottomBar.insertBefore(procBtn, bottomBar.querySelector('#btn-more'))
+  procBtn.addEventListener('click', () => {
+    stopAllTimers()
+    activeView = 'proc'
+    hideAllViews()
+    $('#process-container')?.remove()
+    renderView()
+  })
+
+  // Add keyboard shortcut for palette
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 'k') && !e.shiftKey) {
+      e.preventDefault()
+      if ($('#palette-overlay').classList.contains('show')) $('#palette-overlay').classList.remove('show')
+      else openPalette()
+    }
+  })
+
+  // Difficulty filter chips (delegated)
+  document.addEventListener('click', (e) => {
+    const chip = e.target.closest('.filter-chip')
+    if (chip && chip.dataset.diff) {
+      activeDifficulty = chip.dataset.diff
+      if (activeView === 'commands') renderCommands()
+    }
+  })
+}
+
+// --- Import ---
+function handleImport() {
+  const fileInput = $('#import-file')
+  if (!fileInput.files.length) { toast('请选择文件'); return }
+  const reader = new FileReader()
+  reader.onload = (e) => {
+    try {
+      const data = JSON.parse(e.target.result)
+      if (data.favs && Array.isArray(data.favs)) {
+        favs = [...new Set([...favs, ...data.favs])]
+        save('favs', favs)
+        updateFavCount()
+      }
+      if (data.notes && typeof data.notes === 'object') {
+        Object.assign(notes, data.notes)
+      }
+      if (data.sshHosts && Array.isArray(data.sshHosts)) {
+        sshHosts = [...sshHosts, ...data.sshHosts]
+        save('sshHosts', sshHosts)
+      }
+      if (data.aliases && Array.isArray(data.aliases)) {
+        aliases = [...aliases, ...data.aliases]
+        save('aliases', aliases)
+      }
+      if (data.execHistory && Array.isArray(data.execHistory)) {
+        execHistory = [...execHistory, ...data.execHistory].slice(0, 50)
+        save('execHistory', execHistory)
+      }
+      if (data.favCats && typeof data.favCats === 'object') {
+        Object.assign(favCats, data.favCats)
+        save('favCats', favCats)
+      }
+      $('#import-overlay').classList.remove('show')
+      if (activeView === 'commands') renderCommands()
+      toast('✅ 已导入 ' + fileInput.files[0].name)
+    } catch (err) {
+      toast('❌ 导入失败: ' + err.message)
+    }
+  }
+  reader.readAsText(fileInput.files[0])
+}
+
+// --- Compare Mode ---
+function openCompare() {
+  const overlay = $('#compare-overlay')
+  overlay.classList.add('show')
+  renderCompareSelects()
+}
+function renderCompareSelects() {
+  const body = $('#compare-body')
+  body.innerHTML = ''
+  for (let i = 0; i < 2; i++) {
+    const col = document.createElement('div')
+    col.className = 'compare-col'
+    col.innerHTML = `<select class="compare-select" data-idx="${i}"><option value="">选择命令 ${i + 1}</option></select><div class="compare-detail"></div>`
+    body.appendChild(col)
+  }
+  body.querySelectorAll('.compare-select').forEach(sel => {
+    flatCommands.forEach(c => {
+      const opt = document.createElement('option')
+      opt.value = c.name; opt.textContent = c.name + ' - ' + (c.desc || '').substring(0, 30)
+      sel.appendChild(opt)
+    })
+    sel.addEventListener('change', renderCompareDetails)
+  })
+}
+function renderCompareDetails() {
+  const selects = document.querySelectorAll('.compare-select')
+  selects.forEach(sel => {
+    const name = sel.value
+    const detail = sel.parentElement.querySelector('.compare-detail')
+    if (!name || !detail) { detail.innerHTML = '<p style="color:var(--fg2);font-size:var(--fs-s)">选择一个命令</p>'; return }
+    const cmd = flatCommands.find(c => c.name === name)
+    if (!cmd) return
+    const diff = DIFFICULTY_ICONS[cmd.difficulty] || DIFFICULTY_ICONS.intermediate
+    detail.innerHTML = `
+      <h4>${cmd.name}</h4>
+      <div class="c-label">描述</div><div class="c-val">${cmd.desc || '-'}</div>
+      <div class="c-label">语法</div><div class="c-val">$ ${cmd.syntax || '-'}</div>
+      <div class="c-label">难度</div><div class="c-val" style="color:${diff.color}">${diff.icon} ${diff.label}</div>
+      <div class="c-label">场景</div><div class="c-val">${cmd.scenario || '-'}</div>
+      <div class="c-label">示例</div>${(cmd.examples || []).map(e => `<div class="c-val">$ ${e}</div>`).join('')}
+    `
+  })
+}
+
+// --- Command Palette ---
+function openPalette() {
+  const overlay = $('#palette-overlay')
+  overlay.classList.add('show')
+  const input = $('#palette-input')
+  input.value = ''
+  input.focus()
+  filterPalette('')
+}
+function filterPalette(q) {
+  const results = $('#palette-results')
+  const lower = q.toLowerCase()
+  let items = flatCommands.filter(c => !lower || c.name.toLowerCase().includes(lower) || (c.desc || '').toLowerCase().includes(lower))
+  items = items.slice(0, 20)
+  if (!items.length) { results.innerHTML = '<div class="sug-item" style="color:var(--fg2);justify-content:center">无匹配</div>'; return }
+  results.innerHTML = items.map(c => {
+    const diff = DIFFICULTY_ICONS[c.difficulty] || DIFFICULTY_ICONS.intermediate
+    return `<div class="sug-item" data-cmd="${c.name}" data-syntax="${c.syntax || ''}">
+      <span><span class="sug-name">${c.name}</span> <span class="sug-desc">${(c.desc || '').substring(0, 40)}</span></span>
+      <span style="color:${diff.color};font-size:10px">${diff.icon} ${c.catName}</span>
+    </div>`
+  }).join('')
+  results.querySelectorAll('.sug-item').forEach(el => {
+    el.addEventListener('mousedown', (e) => {
+      e.preventDefault()
+      $('#palette-overlay').classList.remove('show')
+      const syntax = el.dataset.syntax
+      if (syntax) openExec(syntax)
+    })
+  })
+}
+
+// --- Pipeline Builder ---
+function openPipeline() {
+  const overlay = $('#pipeline-overlay')
+  overlay.classList.add('show')
+  renderPipelineSteps()
+}
+function renderPipelineSteps() {
+  const container = $('#pipeline-steps')
+  if (!container.querySelector('.pipeline-step')) {
+    addPipelineStep()
+    addPipelineStep()
+  }
+  updatePipelinePreview()
+}
+function addPipelineStep() {
+  const container = $('#pipeline-steps')
+  const row = document.createElement('div')
+  row.className = 'pipeline-step'
+  row.innerHTML = `<input class="p-step-input" placeholder="输入命令..." spellcheck="false"/> <button class="p-del">✕</button>`
+  row.querySelector('.p-del').addEventListener('click', () => {
+    if (container.querySelectorAll('.pipeline-step').length <= 1) { toast('至少保留一个步骤'); return }
+    row.remove(); updatePipelinePreview()
+  })
+  row.querySelector('.p-step-input').addEventListener('input', updatePipelinePreview)
+  row.querySelector('.p-step-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') addPipelineStep() })
+  container.appendChild(row)
+  row.querySelector('.p-step-input').focus()
+}
+function updatePipelinePreview() {
+  const inputs = document.querySelectorAll('.p-step-input')
+  const parts = Array.from(inputs).map(inp => inp.value.trim()).filter(Boolean)
+  const preview = $('#pipeline-preview')
+  preview.textContent = parts.length ? '$ ' + parts.join(' | ') : '(添加步骤后预览)'
+}
+
+// --- Crontab Builder ---
+function openCrontab() {
+  const overlay = $('#crontab-overlay')
+  overlay.classList.add('show')
+  updateCrontabPreview()
+  loadCurrentCrontab()
+}
+function updateCrontabPreview() {
+  const parts = ['cr-min','cr-hour','cr-day','cr-month','cr-week'].map(id => $(`#${id}`).value.trim() || '*')
+  const cmd = $('#cr-cmd').value.trim()
+  $('#cr-preview').textContent = parts.join(' ') + (cmd ? ' ' + cmd : '')
+}
+async function loadCurrentCrontab() {
+  const content = await GetCrontabContent()
+  $('#cr-current').textContent = content || '(无定时任务)'
+}
+async function saveCrontab() {
+  const parts = ['cr-min','cr-hour','cr-day','cr-month','cr-week'].map(id => $(`#${id}`).value.trim() || '*')
+  const cmd = $('#cr-cmd').value.trim()
+  if (!cmd) { toast('请输入要执行的命令'); return }
+  const line = parts.join(' ') + ' ' + cmd
+  const current = await GetCrontabContent()
+  const newContent = (current && current !== '无定时任务' ? current + '\n' : '') + line
+  const res = await SaveCrontab(newContent)
+  if (res.success) { toast('✅ 定时任务已保存'); loadCurrentCrontab(); $('#cr-cmd').value = '' }
+  else toast('❌ ' + (res.error || '保存失败'))
 }
 
 function moveExecHistorySel(dir) {
@@ -1534,6 +1857,90 @@ function exportPDF() {
   }
 }
 
+// --- Process Manager ---
+async function renderProcessView() {
+  const container = $('#process-container') || createProcessView()
+  container.style.display = 'block'
+  $('#view-title').textContent = '⚙️ 进程管理器'
+  await refreshProcessTable()
+}
+function createProcessView() {
+  const div = document.createElement('div')
+  div.id = 'process-container'
+  div.style.cssText = 'display:none'
+  document.querySelector('#content').appendChild(div)
+  return div
+}
+async function refreshProcessTable() {
+  const container = $('#process-container')
+  try {
+    const raw = await GetProcessTree()
+    const list = JSON.parse(raw)
+    let html = `<h3>⚙️ 进程列表 <button id="proc-refresh" class="cmd-btn" style="font-size:10px;padding:2px 8px">🔄 刷新</button>
+      <span style="font-size:var(--fs-s);color:var(--fg2);font-weight:400;margin-left:8px">Top 50（按 CPU）</span></h3>
+      <table class="proc-table"><thead><tr><th>PID</th><th>命令</th><th>CPU%</th><th>MEM%</th><th>用户</th><th>RSS</th><th>操作</th></tr></thead><tbody>`
+    list.forEach(p => {
+      html += `<tr>
+        <td class="proc-pid">${p.pid}</td>
+        <td class="proc-cmd" title="${p.cmd}">${p.cmd}</td>
+        <td>${p.cpu}</td>
+        <td>${p.mem}</td>
+        <td>${p.user}</td>
+        <td>${p.rss || '-'}</td>
+        <td><button class="proc-kill" data-pid="${p.pid}">✕ 结束</button></td>
+      </tr>`
+    })
+    html += '</tbody></table>'
+    container.innerHTML = html
+    container.querySelector('#proc-refresh').addEventListener('click', refreshProcessTable)
+    container.querySelectorAll('.proc-kill').forEach(el => {
+      el.addEventListener('click', async () => {
+        if (!confirm('确定结束进程 PID: ' + el.dataset.pid + '？')) return
+        const res = await KillProcess(el.dataset.pid)
+        toast(res.success ? '✅ 进程已结束' : '❌ ' + (res.error || '结束失败'))
+        refreshProcessTable()
+      })
+    })
+  } catch (e) {
+    container.innerHTML = `<div class="empty-box"><p>加载进程信息失败</p></div>`
+  }
+}
+
+// --- Fav Categories ---
+function renderFavCats() {
+  const cats = [...new Set(Object.values(favCats).filter(Boolean))]
+  let html = `<div class="fav-cat-bar">
+    <button class="fav-cat ${!activeFavCat ? 'active' : ''}" data-cat="">全部</button>`
+  cats.forEach(c => {
+    const count = Object.entries(favCats).filter(([,v]) => v === c).length
+    html += `<button class="fav-cat ${activeFavCat === c ? 'active' : ''}" data-cat="${c}">${c} (${count})</button>`
+  })
+  html += `<button id="fav-cat-mgr" class="fav-cat-edit">✏️ 管理分类</button>
+  </div>`
+  return html
+}
+
+// --- Docker Exec ---
+async function dockerExecTerminal(id, name) {
+  const cmd = prompt('在容器 ' + name + ' 中执行命令:', 'ls -la')
+  if (!cmd) return
+  const res = await DockerExecTerminal(id, cmd)
+  openExec('docker exec ' + id + ' ' + cmd)
+}
+
+// --- Search Filter Chips ---
+function renderFilterChips() {
+  const diffList = [
+    { key: 'all', label: '全部', icon: '' },
+    { key: 'beginner', label: '⭐入门', icon: '' },
+    { key: 'intermediate', label: '⭐⭐进阶', icon: '' },
+    { key: 'advanced', label: '⭐⭐⭐高级', icon: '' },
+  ]
+  return `<div class="search-filter-row">${diffList.map(d =>
+    `<button class="filter-chip ${activeDifficulty === d.key ? 'active' : ''}" data-diff="${d.key}">${d.label}</button>`
+  ).join('')}</div>`
+}
+
 function showFavorites() {
   stopAllTimers()
   activeView = 'commands'
@@ -1545,8 +1952,80 @@ function showFavorites() {
   hideAllViews()
   const grid = $('#commands-grid')
   grid.style.display = 'grid'
+  let favGrid = document.createElement('div')
+  favGrid.id = 'favs-header'
   let cmds = flatCommands.filter(c => favs.includes(c.name))
+  if (activeFavCat) cmds = cmds.filter(c => favCats[c.name] === activeFavCat)
   cmds = filterByRoleCommands(cmds)
-  $('#view-count').textContent = cmds.length + ' 条'
-  renderCommandCards(grid, cmds, '⭐')
+  const catHtml = renderFavCats()
+  grid.innerHTML = catHtml
+  const bar = grid.querySelector('.fav-cat-bar')
+  bar.querySelectorAll('.fav-cat').forEach(el => {
+    el.addEventListener('click', () => {
+      activeFavCat = el.dataset.cat
+      showFavorites()
+    })
+  })
+  const mgr = grid.querySelector('#fav-cat-mgr')
+  if (mgr) mgr.addEventListener('click', manageFavCats)
+  let html = `<div style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
+    <span style="font-size:var(--fs-s);color:var(--fg2)">${cmds.length} 条收藏</span>
+    <button class="cmd-btn" onclick="if(confirm('确定清空所有收藏？')){favs=[];save('favs',favs);updateFavCount();showFavorites();toast('已清空')}" style="color:#ff6b6b">🗑️ 清空</button>
+  </div>`
+  const cardsDiv = document.createElement('div')
+  cardsDiv.id = 'fav-cards'
+  renderCommandCards(cardsDiv, cmds, '⭐')
+  grid.innerHTML = catHtml + html + cardsDiv.outerHTML
+  bar = grid.querySelector('.fav-cat-bar')
+  bar.querySelectorAll('.fav-cat').forEach(el => {
+    el.addEventListener('click', () => {
+      activeFavCat = el.dataset.cat
+      showFavorites()
+    })
+  })
+  grid.querySelector('#fav-cat-mgr')?.addEventListener('click', manageFavCats)
+  bindFavCards(grid)
+  $('#view-count').textContent = ''
+}
+function manageFavCats() {
+  const cats = [...new Set(Object.entries(favCats).filter(([k]) => favs.includes(k)).map(([,v]) => v).filter(Boolean))]
+  const catsStr = cats.join(', ')
+  const input = prompt('管理收藏分类（用逗号分隔）, 在命令上点击⭐可为命令分配分类:\n当前分类: ' + catsStr + '\n输入新分类名:', '')
+  if (input === null) return
+  toast('分类管理: 在命令的 ⭐ 上右键点击可为收藏添加分类标签')
+}
+
+function bindFavCards(container) {
+  container.querySelectorAll('.cmd-btn.faved, .cmd-btn:not(.run):not(.note-btn):not(.guide-btn):not(.share-btn)').forEach(el => {
+    if (el.classList.contains('run') || el.classList.contains('note-btn') || el.classList.contains('guide-btn') || el.classList.contains('share-btn')) return
+    el.addEventListener('click', (e) => {
+      if (e.button === 2) {
+        e.preventDefault()
+        const name = el.dataset.cmd
+        const cur = favCats[name] || ''
+        const cat = prompt('为 ' + name + ' 设置分类标签:', cur)
+        if (cat !== null) {
+          if (cat.trim()) favCats[name] = cat.trim()
+          else delete favCats[name]
+          save('favCats', favCats)
+          showFavorites()
+        }
+        return
+      }
+      toggleFav(el.dataset.cmd)
+      showFavorites()
+    })
+  })
+  container.querySelectorAll('.cmd-btn.run').forEach(el => el.addEventListener('click', () => openExec(el.dataset.syntax)))
+  container.querySelectorAll('.guide-btn').forEach(el => el.addEventListener('click', () => openGuided(el.dataset.cmd)))
+  container.querySelectorAll('.note-btn').forEach(el => el.addEventListener('click', () => openNote(el.dataset.cmd)))
+  container.querySelectorAll('.share-btn').forEach(el => el.addEventListener('click', () => shareCommand(el.dataset.cmd, el.dataset.syntax)))
+  container.querySelectorAll('.cmd-example').forEach(el => el.addEventListener('click', () => copyText(el.textContent.trim().replace(/^\$\s*/, ''))))
+  container.querySelectorAll('.related-tag').forEach(el => el.addEventListener('click', () => {
+    const name = el.dataset.cmd; const found = flatCommands.find(c => c.name === name)
+    if (found) { activeView = 'commands'; searchFor(name) }
+  }))
+  container.querySelectorAll('.cmd-name').forEach(el => {
+    el.addEventListener('click', () => { const s = el.dataset.syntax; if (s) openExec(s) })
+  })
 }

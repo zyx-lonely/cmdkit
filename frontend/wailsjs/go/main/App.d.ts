@@ -4,7 +4,11 @@ import {main} from '../models';
 
 export function CancelExecution():Promise<boolean>;
 
+export function CheckUpdate():Promise<string>;
+
 export function DockerAction(arg1:string,arg2:string):Promise<main.ExecResult>;
+
+export function DockerExecTerminal(arg1:string,arg2:string):Promise<main.ExecResult>;
 
 export function DockerLogs(arg1:string):Promise<string>;
 
@@ -22,6 +26,8 @@ export function GetCategories():Promise<Array<main.Category>>;
 
 export function GetChineseSearchMap():Promise<string>;
 
+export function GetCrontabContent():Promise<string>;
+
 export function GetCurrentDistro():Promise<string>;
 
 export function GetDistroInfo():Promise<main.DistroInfo>;
@@ -34,11 +40,17 @@ export function GetGuides():Promise<Array<main.GuideCategory>>;
 
 export function GetNote(arg1:string):Promise<string>;
 
+export function GetProcessTree():Promise<string>;
+
 export function GetSysStats():Promise<main.SysStats>;
 
 export function GetSystemInfo():Promise<main.SysInfo>;
 
 export function ImportNotes(arg1:string):Promise<boolean>;
+
+export function KillProcess(arg1:string):Promise<main.ExecResult>;
+
+export function SaveCrontab(arg1:string):Promise<main.ExecResult>;
 
 export function SaveNote(arg1:string,arg2:string):Promise<boolean>;
 

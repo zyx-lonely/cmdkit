@@ -167,12 +167,85 @@
         </div>
     </div>
 
+    <!-- Command Palette -->
+    <div id="palette-overlay">
+        <div id="palette-dialog">
+            <input id="palette-input" placeholder="搜索命令..." spellcheck="false" autocomplete="off"/>
+            <div id="palette-results"></div>
+        </div>
+    </div>
+
+    <!-- Import Dialog -->
+    <div id="import-overlay">
+        <div id="import-dialog">
+            <div id="import-header"><h3>📥 导入数据</h3><button id="import-close">✕</button></div>
+            <div id="import-body">
+                <p style="color:var(--fg2);margin-bottom:10px">选择之前导出的 JSON 文件导入</p>
+                <input type="file" id="import-file" accept=".json"/>
+                <p style="font-size:var(--fs-s);color:var(--fg2);margin-top:8px">导入会合并笔记/收藏/SSH/别名/执行历史</p>
+            </div>
+            <div id="import-footer">
+                <button id="import-cancel">取消</button>
+                <button class="primary" id="import-confirm">📥 导入</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Compare Dialog -->
+    <div id="compare-overlay">
+        <div id="compare-dialog">
+            <div id="compare-header"><h3>📊 命令对比</h3><button id="compare-close">✕</button></div>
+            <div id="compare-body"></div>
+        </div>
+    </div>
+
+    <!-- Pipeline Builder Dialog -->
+    <div id="pipeline-overlay">
+        <div id="pipeline-dialog">
+            <div id="pipeline-header"><h3>🔗 管道构建</h3><button id="pipeline-close">✕</button></div>
+            <div id="pipeline-body">
+                <div id="pipeline-steps"></div>
+                <button id="pipeline-add" class="cmd-btn" style="margin:6px 0">➕ 添加管道步骤</button>
+                <div id="pipeline-preview" class="guided-preview">(添加步骤后预览)</div>
+            </div>
+            <div id="pipeline-footer">
+                <button id="pipeline-run" class="primary" style="background:var(--accent);color:#fff;border:var(--accent)">▶ 执行管道</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Crontab Builder Dialog -->
+    <div id="crontab-overlay">
+        <div id="crontab-dialog">
+            <div id="crontab-header"><h3>⏰ 定时任务构建</h3><button id="crontab-close">✕</button></div>
+            <div id="crontab-body">
+                <div class="crontab-grid">
+                    <div><label>分钟 (0-59)</label><input id="cr-min" value="0" class="cr-input"/></div>
+                    <div><label>小时 (0-23)</label><input id="cr-hour" value="*" class="cr-input"/></div>
+                    <div><label>日期 (1-31)</label><input id="cr-day" value="*" class="cr-input"/></div>
+                    <div><label>月份 (1-12)</label><input id="cr-month" value="*" class="cr-input"/></div>
+                    <div><label>星期 (0-7)</label><input id="cr-week" value="*" class="cr-input"/></div>
+                </div>
+                <div style="margin-top:8px"><label>执行的命令</label><input id="cr-cmd" class="cr-input" style="width:100%" placeholder="如: /usr/bin/backup.sh"/></div>
+                <div class="crontab-preview" id="cr-preview" style="margin-top:8px"></div>
+                <div style="margin-top:8px"><label>当前定时任务</label><pre id="cr-current" style="background:var(--bg-code);padding:8px;border-radius:6px;font-size:var(--fs-code);margin-top:4px;max-height:150px;overflow-y:auto"></pre></div>
+            </div>
+            <div id="crontab-footer">
+                <button id="cr-save" class="primary" style="background:var(--accent);color:#fff;border:var(--accent)">💾 保存定时任务</button>
+            </div>
+        </div>
+    </div>
+
     <!-- More Menu -->
     <div id="more-menu" style="display:none">
         <button id="menu-aliases">📌 别名管理</button>
         <button id="menu-pm">📦 包管理速查</button>
         <button id="menu-pdf">📄 导出收藏为 PDF</button>
+        <button id="menu-compare">📊 命令对比</button>
+        <button id="menu-pipeline">🔗 管道构建</button>
+        <button id="menu-crontab">⏰ 定时任务</button>
         <button id="menu-color">🎨 主题色</button>
+        <button id="menu-import">📥 导入数据</button>
         <button id="menu-export">📤 导出数据</button>
     </div>
 

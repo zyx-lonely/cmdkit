@@ -232,7 +232,8 @@ function renderView() {
 }
 function hideAllViews() {
   ;['commands-grid','guides-container','sysinfo-container','docker-container','ssh-container','aliases-container','process-container'].forEach(id => {
-    document.getElementById(id).style.display = 'none'
+    const el = document.getElementById(id)
+    if (el) el.style.display = 'none'
   })
 }
 

@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark" data-size="md">
+<head>
+    <meta charset="UTF-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>Linux 命令工具箱</title>
+    <link rel="stylesheet" href="./src/style.css"/>
+</head>
+<body>
+    <div id="app">
+        <aside id="sidebar">
+            <div id="sidebar-header">
+                <div class="sidebar-top">
+                    <div>
+                        <h1>🐧 Linux 工具箱</h1>
+                        <p class="subtitle">命令速查 · 环境安装 · 系统诊断</p>
+                        <span id="distro-badge" class="distro-badge"></span>
+                    </div>
+                    <div class="header-actions">
+                        <select id="font-size-select" title="字体大小"><option value="sm">小</option><option value="md" selected>中</option><option value="lg">大</option></select>
+                        <button id="theme-toggle" title="切换主题">🌙</button>
+                    </div>
+                </div>
+            </div>
+            <div class="search-box">
+                <input type="text" id="search-input" placeholder="搜索命令..." spellcheck="false" autocomplete="off"/>
+                <div class="search-hint">Ctrl+F</div>
+                <div id="search-suggest" class="suggest-box" style="display:none"></div>
+            </div>
+            <div id="category-actions">
+                <div style="display:flex;gap:4px;padding:0 2px 6px">
+                    <button class="role-btn active" data-role="all">🔄 全部</button>
+                    <button class="role-btn" data-role="dev">💻 开发</button>
+                    <button class="role-btn" data-role="ops">⚙️ 运维</button>
+                    <button class="role-btn" data-role="common">📋 通用</button>
+                </div>
+                <div style="display:flex;gap:4px;padding:0 2px 6px">
+                    <select id="distro-filter" class="distro-select" title="发行版筛选">
+                        <option value="all">💻 所有发行版</option>
+                        <option value="debian">🐧 Debian/Ubuntu</option>
+                        <option value="rhel">🎩 RHEL/CentOS</option>
+                        <option value="fedora">💙 Fedora</option>
+                        <option value="arch">🚀 Arch Linux</option>
+                        <option value="suse">🦎 openSUSE</option>
+                        <option value="alpine">🏔️ Alpine</option>
+                    </select>
+                </div>
+                <button id="btn-all" class="cat-btn active">📋 全部命令</button>
+                <button id="btn-guides" class="cat-btn">📖 安装指南</button>
+                <button id="btn-sysinfo" class="cat-btn">🖥️ 系统信息</button>
+            </div>
+            <ul id="category-list"></ul>
+            <div id="bottom-bar">
+                <button id="btn-favs">⭐ 收藏 <span id="fav-count">0</span></button>
+                <button id="btn-docker">🐳 Docker</button>
+                <button id="btn-ssh">🔗 SSH</button>
+                <button id="btn-more" title="更多">⋯</button>
+            </div>
+        </aside>
+        <main id="content">
+            <div class="view-header">
+                <h2 id="view-title">全部命令</h2>
+                <span class="count" id="view-count">0 条</span>
+            </div>
+            <div id="commands-grid"></div>
+            <div id="guides-container" style="display:none"></div>
+            <div id="sysinfo-container" style="display:none"></div>
+            <div id="docker-container" style="display:none"></div>
+            <div id="ssh-container" style="display:none"></div>
+            <div id="aliases-container" style="display:none"></div>
+        </main>
+    </div>
+
+    <!-- Exec Dialog -->
+    <div id="exec-overlay">
+        <div id="exec-dialog">
+            <div id="exec-header"><h3>⚡ 执行命令</h3><button id="exec-close">✕</button></div>
+            <div id="exec-body">
+                <div style="position:relative">
+                    <input id="exec-input" spellcheck="false" placeholder="输入命令..." autocomplete="off"/>
+                    <div id="exec-history-drop" class="suggest-box" style="display:none"></div>
+                </div>
+                <div id="exec-output">点击「执行」或按 Enter</div>
+            </div>
+            <div id="exec-footer">
+                <button class="danger" id="exec-clear">清空</button>
+                <button id="exec-cancel" style="display:none;color:#ffcc00;border-color:#ffcc00">⏹️ 取消</button>
+                <div style="flex:1"></div>
+                <button id="exec-copy" style="display:none">📋 复制</button>
+                <button id="exec-show-history" style="border-color:var(--accent);color:var(--accent)">⏱️ 历史</button>
+                <button class="primary" id="exec-run">▶ 执行 (Enter)</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Note Dialog -->
+    <div id="note-overlay">
+        <div id="note-dialog">
+            <div id="note-header"><h3>📝 命令笔记</h3><button id="note-close">✕</button></div>
+            <div id="note-body">
+                <p id="note-cmd-name" style="font-size:16px;font-weight:600;margin-bottom:8px"></p>
+                <textarea id="note-textarea" placeholder="添加个人笔记..." rows="6"></textarea>
+            </div>
+            <div id="note-footer">
+                <button id="note-delete">🗑️ 删除</button>
+                <button class="primary" id="note-save">💾 保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Color Theme Dialog -->
+    <div id="color-overlay">
+        <div id="color-dialog">
+            <div id="color-header"><h3>🎨 主题色设置</h3><button id="color-close">✕</button></div>
+            <div id="color-body">
+                <p style="color:var(--fg2);margin-bottom:12px">选择你喜欢的强调色</p>
+                <div id="color-presets"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SSH Edit Dialog -->
+    <div id="sshedit-overlay">
+        <div id="sshedit-dialog">
+            <div id="sshedit-header"><h3 id="sshedit-title">添加 SSH 主机</h3><button id="sshedit-close">✕</button></div>
+            <div id="sshedit-body">
+                <input id="sshedit-name" placeholder="名称 (如: 我的服务器)" style="margin-bottom:8px"/>
+                <input id="sshedit-host" placeholder="主机地址" style="margin-bottom:8px"/>
+                <div style="display:flex;gap:8px;margin-bottom:8px">
+                    <input id="sshedit-port" placeholder="端口 (22)" style="flex:1"/>
+                    <input id="sshedit-user" placeholder="用户名" style="flex:1"/>
+                </div>
+                <input id="sshedit-key" placeholder="密钥路径 (可选: ~/.ssh/id_rsa)"/>
+            </div>
+            <div id="sshedit-footer">
+                <button id="sshedit-delete" class="danger" style="display:none">🗑️ 删除</button>
+                <div style="flex:1"></div>
+                <button id="sshedit-cancel">取消</button>
+                <button class="primary" id="sshedit-save">💾 保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Alias Edit Dialog -->
+    <div id="alias-overlay">
+        <div id="alias-dialog">
+            <div id="alias-header"><h3>✏️ 别名</h3><button id="alias-close">✕</button></div>
+            <div id="alias-body">
+                <input id="alias-name" placeholder="别名 (如: ll)" style="margin-bottom:8px"/>
+                <input id="alias-cmd" placeholder="命令 (如: ls -la)"/>
+            </div>
+            <div id="alias-footer">
+                <button id="alias-delete" class="danger" style="display:none">🗑️ 删除</button>
+                <div style="flex:1"></div>
+                <button id="alias-cancel">取消</button>
+                <button class="primary" id="alias-save">💾 保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- More Menu -->
+    <div id="more-menu" style="display:none">
+        <button id="menu-aliases">📌 别名管理</button>
+        <button id="menu-pm">📦 包管理速查</button>
+        <button id="menu-color">🎨 主题色</button>
+        <button id="menu-export">📤 导出数据</button>
+    </div>
+
+    <div id="toast"></div>
+    <script src="./src/main.js" type="module"></script>
+</body>
+</html>

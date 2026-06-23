@@ -1,4 +1,5 @@
 import { GetCategories, GetGuides, ExecuteCommand, CancelExecution, GetSystemInfo, FetchURL, SaveNote, GetNote, GetAllNotes, GetDockerContainers, DockerAction, DockerLogs, GetSysStats, TestSSH, GetCurrentDistro, GetDistroInfo, GetGuidedSteps, GetBeginnerPath, CheckUpdate, GetProcessTree, KillProcess, GetCrontabContent, SaveCrontab } from '../wailsjs/go/main/App.js'
+import { BrowserOpenURL } from '../wailsjs/runtime/runtime.js'
 
 let allCategories = []
 let allGuides = []
@@ -1066,9 +1067,16 @@ async function checkForUpdates() {
     const raw = await CheckUpdate()
     const rel = JSON.parse(raw)
     if (rel.error) return
-    const cur = 'v1.0.0'
+    const cur = 'v1.2.0'
     if (rel.tag_name && rel.tag_name > cur) {
-      toast(`📦 新版本 ${rel.tag_name} 可用！前往 GitHub 下载`)
+      const bar = $('#update-bar')
+      bar.style.display = 'block'
+      bar.innerHTML = `<span>📦 ${rel.tag_name}</span><a id="update-link" href="#">下载</a>`
+      bar.querySelector('#update-link').addEventListener('click', (e) => {
+        e.preventDefault()
+        BrowserOpenURL(rel.html_url || 'https://github.com/zyx-lonely/cmdkit/releases/latest')
+      })
+      toast(`📦 新版本 ${rel.tag_name} 可用`)
     }
   } catch (e) { /* ignore */ }
 }

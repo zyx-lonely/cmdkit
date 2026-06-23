@@ -14,6 +14,7 @@ let procTimer = null
 function stopAllTimers() {
   if (sysMonitorTimer) { clearInterval(sysMonitorTimer); sysMonitorTimer = null }
   if (dockerTimer) { clearInterval(dockerTimer); dockerTimer = null }
+  if (procTimer) { clearInterval(procTimer); procTimer = null }
 }
 
 function load(key, def) {
@@ -256,10 +257,7 @@ function renderCommands() {
   grid.style.display = 'grid'
   grid.style.gridTemplateColumns = ''
   $('#view-title').textContent = activeCategory === -1 ? '全部命令' : allCategories[activeCategory].name
-  // Insert filter chips
-  let existingFilters = grid.querySelector('.search-filter-row')
   grid.innerHTML = renderFilterChips()
-  const chipRow = grid.querySelector('.search-filter-row')
   let cmds = activeCategory === -1
     ? flatCommands.slice()
     : allCategories[activeCategory].commands.map(cmd => ({ ...cmd, catName: allCategories[activeCategory].name }))
@@ -301,6 +299,10 @@ function renderCommandCards(grid, cmds, emptyIcon) {
     grid.innerHTML = `<div class="empty-state"><div class="icon">${emptyIcon || '📋'}</div><p>没有找到匹配的命令</p></div>`
     return
   }
+  // Clear any previous cards but preserve filter chips
+  grid.querySelectorAll('.cmd-card').forEach(el => el.remove())
+  const existingEmpty = grid.querySelector('.empty-state')
+  if (existingEmpty) existingEmpty.remove()
   let html = ''
   cmds.forEach(cmd => {
     const f = favs.includes(cmd.name)
@@ -340,7 +342,7 @@ function renderCommandCards(grid, cmds, emptyIcon) {
       ${note ? `<div class="cmd-note-preview">📌 ${note}</div>` : ''}
     </div>`
   })
-  grid.innerHTML = html
+  grid.insertAdjacentHTML('beforeend', html)
   grid.querySelectorAll('.cmd-name').forEach(el => {
     el.addEventListener('click', () => {
       const syntax = el.dataset.syntax
@@ -1619,8 +1621,9 @@ async function saveCrontab() {
   if (!cmd) { toast('请输入要执行的命令'); return }
   const line = parts.join(' ') + ' ' + cmd
   const current = await GetCrontabContent()
-  const newContent = (current && current !== '无定时任务' ? current + '\n' : '') + line
-  const res = await SaveCrontab(newContent)
+  const lines = (current && current !== '无定时任务' ? current.split('\n') : []).filter(l => l.trim() && !l.includes('无定时任务'))
+  lines.push(line)
+  const res = await SaveCrontab(lines.join('\n'))
   if (res.success) { toast('✅ 定时任务已保存'); loadCurrentCrontab(); $('#cr-cmd').value = '' }
   else toast('❌ ' + (res.error || '保存失败'))
 }
@@ -1924,7 +1927,6 @@ function renderFavCats() {
 async function dockerExecTerminal(id, name) {
   const cmd = prompt('在容器 ' + name + ' 中执行命令:', 'ls -la')
   if (!cmd) return
-  const res = await DockerExecTerminal(id, cmd)
   openExec('docker exec ' + id + ' ' + cmd)
 }
 
@@ -1952,80 +1954,52 @@ function showFavorites() {
   hideAllViews()
   const grid = $('#commands-grid')
   grid.style.display = 'grid'
-  let favGrid = document.createElement('div')
-  favGrid.id = 'favs-header'
+  grid.innerHTML = ''
   let cmds = flatCommands.filter(c => favs.includes(c.name))
   if (activeFavCat) cmds = cmds.filter(c => favCats[c.name] === activeFavCat)
   cmds = filterByRoleCommands(cmds)
   const catHtml = renderFavCats()
-  grid.innerHTML = catHtml
-  const bar = grid.querySelector('.fav-cat-bar')
-  bar.querySelectorAll('.fav-cat').forEach(el => {
-    el.addEventListener('click', () => {
-      activeFavCat = el.dataset.cat
-      showFavorites()
-    })
-  })
-  const mgr = grid.querySelector('#fav-cat-mgr')
-  if (mgr) mgr.addEventListener('click', manageFavCats)
-  let html = `<div style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
-    <span style="font-size:var(--fs-s);color:var(--fg2)">${cmds.length} 条收藏</span>
-    <button class="cmd-btn" onclick="if(confirm('确定清空所有收藏？')){favs=[];save('favs',favs);updateFavCount();showFavorites();toast('已清空')}" style="color:#ff6b6b">🗑️ 清空</button>
-  </div>`
-  const cardsDiv = document.createElement('div')
-  cardsDiv.id = 'fav-cards'
-  renderCommandCards(cardsDiv, cmds, '⭐')
-  grid.innerHTML = catHtml + html + cardsDiv.outerHTML
-  bar = grid.querySelector('.fav-cat-bar')
-  bar.querySelectorAll('.fav-cat').forEach(el => {
+  grid.insertAdjacentHTML('beforeend', catHtml)
+  grid.querySelectorAll('.fav-cat').forEach(el => {
     el.addEventListener('click', () => {
       activeFavCat = el.dataset.cat
       showFavorites()
     })
   })
   grid.querySelector('#fav-cat-mgr')?.addEventListener('click', manageFavCats)
-  bindFavCards(grid)
-  $('#view-count').textContent = ''
-}
-function manageFavCats() {
-  const cats = [...new Set(Object.entries(favCats).filter(([k]) => favs.includes(k)).map(([,v]) => v).filter(Boolean))]
-  const catsStr = cats.join(', ')
-  const input = prompt('管理收藏分类（用逗号分隔）, 在命令上点击⭐可为命令分配分类:\n当前分类: ' + catsStr + '\n输入新分类名:', '')
-  if (input === null) return
-  toast('分类管理: 在命令的 ⭐ 上右键点击可为收藏添加分类标签')
-}
-
-function bindFavCards(container) {
-  container.querySelectorAll('.cmd-btn.faved, .cmd-btn:not(.run):not(.note-btn):not(.guide-btn):not(.share-btn)').forEach(el => {
+  const infoHtml = `<div style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
+    <span style="font-size:var(--fs-s);color:var(--fg2)">${cmds.length} 条收藏</span>
+    <button id="fav-clear-all" class="cmd-btn" style="color:#ff6b6b">🗑️ 清空</button>
+  </div>`
+  grid.insertAdjacentHTML('beforeend', infoHtml)
+  grid.querySelector('#fav-clear-all')?.addEventListener('click', () => {
+    if (confirm('确定清空所有收藏？')) { favs = []; save('favs', favs); updateFavCount(); showFavorites(); toast('已清空') }
+  })
+  renderCommandCards(grid, cmds, '⭐')
+  // Bind category toggle on fav star via contextmenu
+  grid.querySelectorAll('.cmd-btn.faved, .cmd-btn:not(.run):not(.note-btn):not(.guide-btn):not(.share-btn)').forEach(el => {
     if (el.classList.contains('run') || el.classList.contains('note-btn') || el.classList.contains('guide-btn') || el.classList.contains('share-btn')) return
-    el.addEventListener('click', (e) => {
-      if (e.button === 2) {
-        e.preventDefault()
-        const name = el.dataset.cmd
-        const cur = favCats[name] || ''
-        const cat = prompt('为 ' + name + ' 设置分类标签:', cur)
-        if (cat !== null) {
-          if (cat.trim()) favCats[name] = cat.trim()
-          else delete favCats[name]
-          save('favCats', favCats)
-          showFavorites()
-        }
-        return
+    el.addEventListener('contextmenu', (e) => {
+      e.preventDefault()
+      const name = el.dataset.cmd
+      if (!favs.includes(name)) return
+      const cur = favCats[name] || ''
+      const cat = prompt('为 ' + name + ' 设置分类标签:', cur)
+      if (cat !== null) {
+        if (cat.trim()) favCats[name] = cat.trim()
+        else delete favCats[name]
+        save('favCats', favCats)
+        showFavorites()
       }
+    })
+    el.addEventListener('click', (e) => {
       toggleFav(el.dataset.cmd)
       showFavorites()
     })
   })
-  container.querySelectorAll('.cmd-btn.run').forEach(el => el.addEventListener('click', () => openExec(el.dataset.syntax)))
-  container.querySelectorAll('.guide-btn').forEach(el => el.addEventListener('click', () => openGuided(el.dataset.cmd)))
-  container.querySelectorAll('.note-btn').forEach(el => el.addEventListener('click', () => openNote(el.dataset.cmd)))
-  container.querySelectorAll('.share-btn').forEach(el => el.addEventListener('click', () => shareCommand(el.dataset.cmd, el.dataset.syntax)))
-  container.querySelectorAll('.cmd-example').forEach(el => el.addEventListener('click', () => copyText(el.textContent.trim().replace(/^\$\s*/, ''))))
-  container.querySelectorAll('.related-tag').forEach(el => el.addEventListener('click', () => {
-    const name = el.dataset.cmd; const found = flatCommands.find(c => c.name === name)
-    if (found) { activeView = 'commands'; searchFor(name) }
-  }))
-  container.querySelectorAll('.cmd-name').forEach(el => {
-    el.addEventListener('click', () => { const s = el.dataset.syntax; if (s) openExec(s) })
-  })
+  $('#view-count').textContent = ''
+}
+function manageFavCats() {
+  const cats = [...new Set(Object.entries(favCats).filter(([k]) => favs.includes(k)).map(([,v]) => v).filter(Boolean))]
+  toast('当前分类: ' + (cats.join(', ') || '无') + ' | 右键点击收藏⭐可为命令分配分类')
 }

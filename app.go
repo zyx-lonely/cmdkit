@@ -1175,7 +1175,7 @@ func (a *App) CheckUpdate() string {
 }
 
 func (a *App) GetProcessTree() string {
-	out := run("sh", "-c", `ps aux --sort=-%cpu | head -50 | awk '{print $2","$11","$3","$4","$1","$6}'`)
+	out := run("sh", "-c", `ps aux --sort=-%cpu | head -50 | awk 'NR>1{print $2","$11","$3","$4","$1","$6}'`)
 	lines := strings.Split(out, "\n")
 	type Proc struct {
 		PID  string `json:"pid"`
@@ -1206,8 +1206,17 @@ func (a *App) GetCrontabContent() string {
 }
 
 func (a *App) SaveCrontab(content string) ExecResult {
+	lines := strings.Split(content, "\n")
+	var clean []string
+	for _, l := range lines {
+		trimmed := strings.TrimSpace(l)
+		if trimmed != "" && !strings.HasPrefix(trimmed, "无定时任务") {
+			clean = append(clean, trimmed)
+		}
+	}
+	final := strings.Join(clean, "\n")
 	cmd := exec.Command("crontab", "-")
-	cmd.Stdin = strings.NewReader(content)
+	cmd.Stdin = strings.NewReader(final)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

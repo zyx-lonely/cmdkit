@@ -1,4 +1,4 @@
-import { GetCategories, GetGuides, ExecuteCommand, CancelExecution, GetChineseSearchMap, GetSystemInfo, FetchURL, SaveNote, GetNote, GetAllNotes, ImportNotes, GetDockerContainers, DockerAction, DockerLogs, GetSysStats, TestSSH, GetCurrentDistro, GetDistroInfo, GetGuidedSteps, GetBeginnerPath, CheckUpdate, GetProcessTree, KillProcess, GetCrontabContent, SaveCrontab, DockerExecTerminal } from '../wailsjs/go/main/App.js'
+import { GetCategories, GetGuides, ExecuteCommand, CancelExecution, GetSystemInfo, FetchURL, SaveNote, GetNote, GetAllNotes, GetDockerContainers, DockerAction, DockerLogs, GetSysStats, TestSSH, GetCurrentDistro, GetDistroInfo, GetGuidedSteps, GetBeginnerPath, CheckUpdate, GetProcessTree, KillProcess, GetCrontabContent, SaveCrontab } from '../wailsjs/go/main/App.js'
 
 let allCategories = []
 let allGuides = []
@@ -34,6 +34,7 @@ let activeFavCat = ''
 let activeDifficulty = 'all'
 
 let flatCommands = []
+let flatCommandsMap = null
 let searchHistory = load('searchHistory', [])
 let searchTimer = null
 
@@ -152,6 +153,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   allCategories = await GetCategories()
   allGuides = await GetGuides()
   flatCommands = allCategories.flatMap(c => c.commands.map(cmd => ({ ...cmd, catName: c.name })))
+  flatCommandsMap = new Map(flatCommands.map(c => [c.name, c]))
   const raw = await GetAllNotes()
   try { notes = JSON.parse(raw || '{}') } catch { notes = {} }
   if (!notes) notes = {}
@@ -202,18 +204,6 @@ function renderCategories() {
     html += `<li><button class="${active}" data-idx="${origIdx}">${roleLabel} ${cat.name} <span class="cat-count">${count}</span></button></li>`
   })
   list.innerHTML = html
-  list.querySelectorAll('button').forEach(btn => {
-    btn.addEventListener('click', () => {
-      activeCategory = parseInt(btn.dataset.idx)
-      activeView = 'commands'
-      $('#btn-all').classList.add('active')
-      $('#btn-guides').classList.remove('active')
-      $('#btn-sysinfo').classList.remove('active')
-      $('#btn-docker').classList.remove('active')
-      $('#btn-ssh').classList.remove('active')
-      renderView()
-    })
-  })
 }
 function renderView() {
   hideAllViews()
@@ -267,27 +257,29 @@ function renderCommands() {
   cmds = filterByDifficulty(cmds)
   const q = $('#search-input').value.trim().toLowerCase()
   lastSearchQuery = q
-  if (q) {
-    let matched = cmds.filter(c =>
-      c.name.toLowerCase().includes(q) ||
-      (c.desc || '').toLowerCase().includes(q) ||
-      (c.syntax || '').toLowerCase().includes(q) ||
-      (c.examples || []).some(e => e.toLowerCase().includes(q))
-    )
-    if (!matched.length) {
-      const zhSet = new Set()
-      for (const [zh, cmdsList] of Object.entries(ZH_SEARCH)) {
-        if (zh.includes(q) || q.includes(zh)) cmdsList.forEach(c => zhSet.add(c))
-      }
-      if (zhSet.size) matched = cmds.filter(c => zhSet.has(c.name))
-    }
-    cmds = matched
-  }
+  if (q) cmds = searchInCmds(cmds, q)
   $('#view-count').textContent = cmds.length + ' 条'
   const cardsContainer = document.createElement('div')
   cardsContainer.style.cssText = 'display:contents'
   grid.appendChild(cardsContainer)
   renderCommandCards(cardsContainer, cmds, '🔍')
+}
+
+function searchInCmds(cmds, q) {
+  let matched = cmds.filter(c =>
+    c.name.toLowerCase().includes(q) ||
+    (c.desc || '').toLowerCase().includes(q) ||
+    (c.syntax || '').toLowerCase().includes(q) ||
+    (c.examples || []).some(e => e.toLowerCase().includes(q))
+  )
+  if (!matched.length) {
+    const zhSet = new Set()
+    for (const [zh, cmdsList] of Object.entries(ZH_SEARCH)) {
+      if (zh.includes(q) || q.includes(zh)) cmdsList.forEach(c => zhSet.add(c))
+    }
+    if (zhSet.size) matched = cmds.filter(c => zhSet.has(c.name))
+  }
+  return matched
 }
 
 function filterByDifficulty(cmds) {
@@ -344,41 +336,6 @@ function renderCommandCards(grid, cmds, emptyIcon) {
     </div>`
   })
   grid.insertAdjacentHTML('beforeend', html)
-  grid.querySelectorAll('.cmd-name').forEach(el => {
-    el.addEventListener('click', () => {
-      const syntax = el.dataset.syntax
-      if (syntax) openExec(syntax)
-    })
-  })
-  grid.querySelectorAll('.cmd-btn.run').forEach(el => {
-    el.addEventListener('click', () => openExec(el.dataset.syntax))
-  })
-  grid.querySelectorAll('.guide-btn').forEach(el => {
-    el.addEventListener('click', () => openGuided(el.dataset.cmd))
-  })
-  grid.querySelectorAll('.note-btn').forEach(el => {
-    el.addEventListener('click', () => openNote(el.dataset.cmd))
-  })
-  grid.querySelectorAll('.share-btn').forEach(el => {
-    el.addEventListener('click', () => shareCommand(el.dataset.cmd, el.dataset.syntax))
-  })
-  grid.querySelectorAll('.cmd-btn.faved, .cmd-btn:not(.run):not(.note-btn):not(.guide-btn):not(.share-btn)').forEach(el => {
-    if (el.classList.contains('run') || el.classList.contains('note-btn') || el.classList.contains('guide-btn') || el.classList.contains('share-btn')) return
-    el.addEventListener('click', () => toggleFav(el.dataset.cmd))
-  })
-  grid.querySelectorAll('.cmd-example').forEach(el => {
-    el.addEventListener('click', () => copyText(el.textContent.trim().replace(/^\$\s*/, '')))
-  })
-  grid.querySelectorAll('.related-tag').forEach(el => {
-    el.addEventListener('click', () => {
-      const name = el.dataset.cmd
-      const found = flatCommands.find(c => c.name === name)
-      if (found) {
-        activeView = 'commands'
-        searchFor(name)
-      }
-    })
-  })
 }
 
 function searchFor(q) {
@@ -410,16 +367,6 @@ async function renderBeginnerPath() {
       </details>`
     })
     grid.innerHTML = html
-    grid.querySelectorAll('.bp-cmd').forEach(el => {
-      el.addEventListener('click', () => {
-        const name = el.dataset.cmd
-        const found = flatCommands.find(c => c.name === name)
-        if (found) {
-          activeView = 'commands'
-          searchFor(name)
-        }
-      })
-    })
   } catch (e) {
     grid.innerHTML = `<div class="empty-box"><p>加载学习计划失败</p></div>`
   }
@@ -1437,12 +1384,127 @@ function bindEvents() {
     }
   })
 
-  // Difficulty filter chips (delegated)
+  setupDelegation()
+}
+
+function setupDelegation() {
+  // Single delegation handler for all dynamic content
   document.addEventListener('click', (e) => {
-    const chip = e.target.closest('.filter-chip')
+    const target = e.target
+    // Filter chips
+    const chip = target.closest('.filter-chip')
     if (chip && chip.dataset.diff) {
       activeDifficulty = chip.dataset.diff
       if (activeView === 'commands') renderCommands()
+      return
+    }
+    // Fav category tags
+    const favCat = target.closest('.fav-cat')
+    if (favCat && favCat.dataset.cat !== undefined) {
+      activeFavCat = favCat.dataset.cat
+      showFavorites()
+      return
+    }
+    // Fav category manager
+    if (target.closest('#fav-cat-mgr')) {
+      manageFavCats()
+      return
+    }
+    // Clear all favorites
+    if (target.closest('#fav-clear-all')) {
+      if (confirm('确定清空所有收藏？')) { favs = []; save('favs', favs); updateFavCount(); showFavorites(); toast('已清空') }
+      return
+    }
+    // Category list buttons
+    const catBtn = target.closest('#category-list button[data-idx]')
+    if (catBtn) {
+      activeCategory = parseInt(catBtn.dataset.idx)
+      activeView = 'commands'
+      $('#btn-all').classList.add('active')
+      $('#btn-guides').classList.remove('active')
+      $('#btn-sysinfo').classList.remove('active')
+      $('#btn-docker').classList.remove('active')
+      $('#btn-ssh').classList.remove('active')
+      renderView()
+      return
+    }
+    // Beginner path command tags
+    const bpCmd = target.closest('.bp-cmd')
+    if (bpCmd) {
+      const name = bpCmd.dataset.cmd
+      if (flatCommandsMap.has(name)) {
+        activeView = 'commands'
+        searchFor(name)
+      }
+      return
+    }
+    // Command name (click to execute)
+    const cmdName = target.closest('.cmd-name')
+    if (cmdName && cmdName.dataset.syntax) {
+      openExec(cmdName.dataset.syntax)
+      return
+    }
+    // Run button
+    const runBtn = target.closest('.cmd-btn.run')
+    if (runBtn && runBtn.dataset.syntax) {
+      openExec(runBtn.dataset.syntax)
+      return
+    }
+    // Guide button
+    const guideBtn = target.closest('.guide-btn')
+    if (guideBtn && guideBtn.dataset.cmd) {
+      openGuided(guideBtn.dataset.cmd)
+      return
+    }
+    // Note button
+    const noteBtn = target.closest('.note-btn')
+    if (noteBtn && noteBtn.dataset.cmd) {
+      openNote(noteBtn.dataset.cmd)
+      return
+    }
+    // Share button
+    const shareBtn = target.closest('.share-btn')
+    if (shareBtn && shareBtn.dataset.cmd) {
+      shareCommand(shareBtn.dataset.cmd, shareBtn.dataset.syntax || '')
+      return
+    }
+    // Favorite toggle
+    const favBtn = target.closest('.cmd-btn:not(.run):not(.note-btn):not(.guide-btn):not(.share-btn)')
+    if (favBtn && favBtn.dataset.cmd) {
+      toggleFav(favBtn.dataset.cmd)
+      return
+    }
+    // Command example
+    const example = target.closest('.cmd-example')
+    if (example) {
+      copyText(example.textContent.trim().replace(/^\$\s*/, ''))
+      return
+    }
+    // Related tag
+    const related = target.closest('.related-tag')
+    if (related && related.dataset.cmd) {
+      const name = related.dataset.cmd
+      if (flatCommandsMap.has(name)) {
+        activeView = 'commands'
+        searchFor(name)
+      }
+      return
+    }
+  })
+  // Context menu for fav star (right-click)
+  document.addEventListener('contextmenu', (e) => {
+    const btn = e.target.closest('.cmd-btn:not(.run):not(.note-btn):not(.guide-btn):not(.share-btn)')
+    if (btn && btn.dataset.cmd && favs.includes(btn.dataset.cmd)) {
+      e.preventDefault()
+      const name = btn.dataset.cmd
+      const cur = favCats[name] || ''
+      const cat = prompt('为 ' + name + ' 设置分类标签:', cur)
+      if (cat !== null) {
+        if (cat.trim()) favCats[name] = cat.trim()
+        else delete favCats[name]
+        save('favCats', favCats)
+        showFavorites()
+      }
     }
   })
 }
@@ -1519,7 +1581,7 @@ function renderCompareDetails() {
     const name = sel.value
     const detail = sel.parentElement.querySelector('.compare-detail')
     if (!name || !detail) { detail.innerHTML = '<p style="color:var(--fg2);font-size:var(--fs-s)">选择一个命令</p>'; return }
-    const cmd = flatCommands.find(c => c.name === name)
+    const cmd = flatCommandsMap.get(name)
     if (!cmd) return
     const diff = DIFFICULTY_ICONS[cmd.difficulty] || DIFFICULTY_ICONS.intermediate
     detail.innerHTML = `
@@ -1748,19 +1810,7 @@ function renderSuggestions() {
   const q = $('#search-input').value.trim().toLowerCase()
   if (!q || activeView !== 'commands') { drop.style.display = 'none'; return }
   let all = filterByRoleCommands(flatCommands)
-  let results = all.filter(c =>
-    c.name.toLowerCase().includes(q) || (c.desc || '').toLowerCase().includes(q) ||
-    (c.syntax || '').toLowerCase().includes(q) || (c.examples || []).some(e => e.toLowerCase().includes(q))
-  )
-  if (results.length < 1) {
-    const zhCmds = new Set()
-    for (const [zh, cmds] of Object.entries(ZH_SEARCH)) {
-      if (zh.includes(q) || q.includes(zh)) cmds.forEach(c => zhCmds.add(c))
-    }
-    if (zhCmds.size) {
-      results = all.filter(c => zhCmds.has(c.name))
-    }
-  }
+  let results = searchInCmds(all, q)
   results = results.slice(0, 8)
   if (!results.length) { drop.style.display = 'none'; return }
   drop.style.display = 'block'
@@ -1961,43 +2011,12 @@ function showFavorites() {
   cmds = filterByRoleCommands(cmds)
   const catHtml = renderFavCats()
   grid.insertAdjacentHTML('beforeend', catHtml)
-  grid.querySelectorAll('.fav-cat').forEach(el => {
-    el.addEventListener('click', () => {
-      activeFavCat = el.dataset.cat
-      showFavorites()
-    })
-  })
-  grid.querySelector('#fav-cat-mgr')?.addEventListener('click', manageFavCats)
   const infoHtml = `<div style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
     <span style="font-size:var(--fs-s);color:var(--fg2)">${cmds.length} 条收藏</span>
     <button id="fav-clear-all" class="cmd-btn" style="color:#ff6b6b">🗑️ 清空</button>
   </div>`
   grid.insertAdjacentHTML('beforeend', infoHtml)
-  grid.querySelector('#fav-clear-all')?.addEventListener('click', () => {
-    if (confirm('确定清空所有收藏？')) { favs = []; save('favs', favs); updateFavCount(); showFavorites(); toast('已清空') }
-  })
   renderCommandCards(grid, cmds, '⭐')
-  // Bind category toggle on fav star via contextmenu
-  grid.querySelectorAll('.cmd-btn.faved, .cmd-btn:not(.run):not(.note-btn):not(.guide-btn):not(.share-btn)').forEach(el => {
-    if (el.classList.contains('run') || el.classList.contains('note-btn') || el.classList.contains('guide-btn') || el.classList.contains('share-btn')) return
-    el.addEventListener('contextmenu', (e) => {
-      e.preventDefault()
-      const name = el.dataset.cmd
-      if (!favs.includes(name)) return
-      const cur = favCats[name] || ''
-      const cat = prompt('为 ' + name + ' 设置分类标签:', cur)
-      if (cat !== null) {
-        if (cat.trim()) favCats[name] = cat.trim()
-        else delete favCats[name]
-        save('favCats', favCats)
-        showFavorites()
-      }
-    })
-    el.addEventListener('click', (e) => {
-      toggleFav(el.dataset.cmd)
-      showFavorites()
-    })
-  })
   $('#view-count').textContent = ''
 }
 function manageFavCats() {

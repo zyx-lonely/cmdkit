@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -75,11 +76,6 @@ type SysInfo struct {
 	GoVersion   string `json:"goVersion"`
 	Shell       string `json:"shell"`
 	Desktop     string `json:"desktop"`
-}
-
-type NoteData struct {
-	CmdName string `json:"cmdName"`
-	Note    string `json:"note"`
 }
 
 type App struct {
@@ -175,19 +171,27 @@ func (a *App) GetDistroInfo() DistroInfo {
 	return info
 }
 
-func enrichCommands(cats []Category) []Category {
-	difficultyMap := map[string]string{}
+var (
+	difficultyMapOnce sync.Once
+	difficultyMap     map[string]string
+	relatedMap        map[string][]string
+	platformMap       map[string][]string
+	altForMap         map[string]string
+)
+
+func initMaps() {
+	difficultyMap = map[string]string{}
 	for _, s := range []string{"ls,cat,echo,pwd,mkdir,touch,cp,mv,rm,whoami,id,uname,free,df,uptime,history,alias,export,which,man,help,date,cal,clear,exit,cd,less,more,head,tail,wc,ping,curl,wget,zip,unzip,gzip,gunzip,shutdown,reboot,passwd,sudo,su,groups,chmod,chown,file,tar,ssh,scp,git,git clone,nslookup,dig,watch,sleep,kill,ps,top,hostnamectl,timedatectl,neofetch,docker,docker run"} {
 		difficultyMap[s] = "beginner"
 	}
 	for _, s := range []string{"find,grep,sed,awk,sort,diff,cut,ln,dd,rsync,screen/tmux,nohup,bg/fg,killall,pkill,crontab,apt,apt-cache,dpkg,snap,flatpak,yum,dnf,pacman,rpm,pip,npm,xargs,tee,du,blkid,lsblk,fdisk,parted,mount,umount,swapon/swapoff,fsck,smartctl,ip,ss,netstat,nmcli,firewall-cmd,traceroute,journalctl,systemctl,useradd,usermod,userdel,groupadd,last,git init,git add,git commit,git push,git pull,git branch,git merge,git stash,git diff,git status,git log,docker ps,docker images,docker pull,docker build,docker exec,docker logs"} {
 		difficultyMap[s] = "intermediate"
 	}
-	for _, s := range []string{"gdisk,mkfs,parted,7z,xz,bzip2,zcat/zless,dd,smartctl,nmap,tcpdump,ssh-keygen,ssh-copy-id,ssh-copy-id,sftp,telnet,nc,firewall-cmd,git revert,git rebase,git reset,docker-compose"} {
+	for _, s := range []string{"gdisk,mkfs,parted,7z,xz,bzip2,zcat/zless,dd,smartctl,nmap,tcpdump,ssh-keygen,ssh-copy-id,sftp,telnet,nc,firewall-cmd,git revert,git rebase,git reset,docker-compose"} {
 		difficultyMap[s] = "advanced"
 	}
 
-	relatedMap := map[string][]string{
+	relatedMap = map[string][]string{
 		"ls":      {"cd", "pwd", "tree", "find"},
 		"cat":     {"less", "more", "head", "tail", "nl"},
 		"cd":      {"pwd", "ls"},
@@ -267,7 +271,7 @@ func enrichCommands(cats []Category) []Category {
 		"fsck":   {"smartctl", "fdisk"},
 	}
 
-	platformMap := map[string][]string{
+	platformMap = map[string][]string{
 		"apt":     {"debian"}, "apt-cache": {"debian"}, "dpkg": {"debian"},
 		"yum":     {"rhel"}, "dnf": {"fedora"}, "pacman": {"arch"},
 		"rpm":     {"rhel", "fedora"}, "snap": {"debian", "fedora", "arch"},
@@ -278,7 +282,7 @@ func enrichCommands(cats []Category) []Category {
 		"apk":     {"alpine"},
 	}
 
-	altForMap := map[string]string{
+	altForMap = map[string]string{
 		"apt":     "Debian/Ubuntu 系列使用 apt，CentOS/RHEL 用 yum/dnf，Arch 用 pacman",
 		"yum":     "CentOS/RHEL 7 使用 yum，Ubuntu 用 apt，Fedora 用 dnf，Arch 用 pacman",
 		"dnf":     "Fedora/RHEL 8+ 使用 dnf，Ubuntu 用 apt，Arch 用 pacman",
@@ -290,7 +294,10 @@ func enrichCommands(cats []Category) []Category {
 		"firewall-cmd": "firewall-cmd 是 RHEL/Fedora 的防火墙工具，Ubuntu 用 ufw",
 		"zypper":  "openSUSE 使用 zypper，Ubuntu 用 apt，CentOS 用 yum",
 	}
+}
 
+func enrichCommands(cats []Category) []Category {
+	difficultyMapOnce.Do(initMaps)
 	for ci := range cats {
 		for cj := range cats[ci].Commands {
 			cmd := &cats[ci].Commands[cj]
@@ -1060,9 +1067,12 @@ func (a *App) GetChineseSearchMap() string {
 	return string(b)
 }
 
-func (a *App) FetchURL(url string) FetchResult {
+func (a *App) FetchURL(rawURL string) FetchResult {
+	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
+		return FetchResult{Success: false, Error: "只允许 http/https 协议"}
+	}
 	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get(url)
+	resp, err := client.Get(rawURL)
 	if err != nil {
 		return FetchResult{Success: false, Error: err.Error()}
 	}
@@ -1092,7 +1102,7 @@ func (a *App) GetDockerContainers() string {
 		return "[]"
 	}
 	lines := strings.Split(out, "\n")
-	var containers []DockerContainer
+	containers := make([]DockerContainer, 0)
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -1103,14 +1113,16 @@ func (a *App) GetDockerContainers() string {
 			containers = append(containers, c)
 		}
 	}
-	if containers == nil {
-		return "[]"
-	}
 	b, _ := json.Marshal(containers)
 	return string(b)
 }
 
+var allowedDockerActions = map[string]bool{"start": true, "stop": true, "restart": true, "pause": true, "unpause": true}
+
 func (a *App) DockerAction(id, action string) ExecResult {
+	if !allowedDockerActions[action] {
+		return ExecResult{Success: false, Error: "不允许的操作: " + action}
+	}
 	return runExec("docker", action, id)
 }
 
@@ -1163,12 +1175,14 @@ func (a *App) CheckUpdate() string {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get("https://api.github.com/repos/zyx-lonely/cmdkit/releases/latest")
 	if err != nil {
-		return `{"error":"` + err.Error() + `"}`
+		b, _ := json.Marshal(map[string]string{"error": err.Error()})
+		return string(b)
 	}
 	defer resp.Body.Close()
 	var r Release
 	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
-		return `{"error":"` + err.Error() + `"}`
+		b, _ := json.Marshal(map[string]string{"error": err.Error()})
+		return string(b)
 	}
 	b, _ := json.Marshal(r)
 	return string(b)
@@ -1197,7 +1211,19 @@ func (a *App) GetProcessTree() string {
 }
 
 func (a *App) KillProcess(pid string) ExecResult {
+	if pid == "" || !isNumeric(pid) {
+		return ExecResult{Success: false, Error: "无效的 PID"}
+	}
 	return runExec("kill", "-9", pid)
+}
+
+func isNumeric(s string) bool {
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *App) GetCrontabContent() string {
@@ -1225,7 +1251,7 @@ func (a *App) SaveCrontab(content string) ExecResult {
 }
 
 func (a *App) DockerExecTerminal(containerID, shellCmd string) ExecResult {
-	return runExec("sh", "-c", "docker exec -i "+containerID+" "+shellCmd+" 2>/dev/null || docker exec -i "+containerID+" sh -c \""+shellCmd+"\"")
+	return runExec("docker", "exec", "-i", containerID, "sh", "-c", shellCmd)
 }
 
 func (a *App) TestSSH(host, port, user, keyPath string) ExecResult {
@@ -1238,7 +1264,9 @@ func (a *App) TestSSH(host, port, user, keyPath string) ExecResult {
 }
 
 func runExec(name string, args ...string) ExecResult {
-	cmd := exec.Command(name, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

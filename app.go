@@ -944,6 +944,81 @@ func (a *App) CancelExecution() bool {
 	return false
 }
 
+type ParamField struct {
+	Flag        string `json:"flag"`
+	Prompt      string `json:"prompt"`
+	Default     string `json:"default"`
+	Options     string `json:"options"`
+}
+
+type GuidedStep struct {
+	Fields []ParamField `json:"fields"`
+	Build  string       `json:"build"`
+	Desc   string       `json:"desc"`
+}
+
+func (a *App) GetGuidedSteps(name string) string {
+	data := map[string][]GuidedStep{
+		"dd": {
+			{Fields: []ParamField{{Flag: "if=", Prompt: "输入文件（源）", Default: "/dev/sda", Options: "设备路径如 /dev/sda, /dev/zero, /dev/urandom"}, {Flag: "of=", Prompt: "输出文件（目标）", Default: "/backup.img", Options: "文件路径如 backup.img, /dev/sdb1"}, {Flag: "bs=", Prompt: "块大小", Default: "4M", Options: "4M, 1M, 512, 1K"}, {Flag: "count=", Prompt: "块数量（留空=全部）", Default: "", Options: "指定数量或留空"}}, Build: "dd if={if=} of={of=} bs={bs=}{ count=}", Desc: "备份磁盘或创建镜像"},
+			{Fields: []ParamField{{Flag: "if=", Prompt: "输入文件", Default: "/dev/zero", Options: "源路径"}, {Flag: "of=", Prompt: "输出交换文件", Default: "/swapfile", Options: "目标路径"}, {Flag: "bs=", Prompt: "块大小", Default: "1M", Options: "1M, 1K"}, {Flag: "count=", Prompt: "块数量", Default: "1024", Options: "1024=1GB"}}, Build: "dd if={if=} of={of=} bs={bs=} count={count=}", Desc: "创建交换文件"},
+		},
+		"rsync": {
+			{Fields: []ParamField{{Flag: "src", Prompt: "源路径", Default: "/home/user/dir/", Options: "本地路径或 user@host:path"}, {Flag: "dst", Prompt: "目标路径", Default: "/backup/", Options: "本地或远程路径"}, {Flag: "archive", Prompt: "归档模式（保留属性）", Default: "-avz", Options: "-avz 归档压缩, -a 仅归档, -r 递归"}, {Flag: "extra", Prompt: "额外选项", Default: "--progress", Options: "--progress 显示进度, --delete 删除多余"}}, Build: "rsync {archive} {extra} {src} {dst}", Desc: "本地或远程文件同步"},
+		},
+		"tar": {
+			{Fields: []ParamField{{Flag: "action", Prompt: "操作类型", Default: "-czf", Options: "-czf 创建tar.gz, -xzf 解压tar.gz, -tf 查看, -cjf 创建tar.bz2"}, {Flag: "archive", Prompt: "归档文件名", Default: "archive.tar.gz", Options: ".tar.gz, .tar.bz2, .tar"}, {Flag: "files", Prompt: "要打包的文件/目录", Default: "/path/to/dir", Options: "可以指定多个，用空格分隔"}}, Build: "tar {action} {archive} {files}", Desc: "打包或解压文件"},
+		},
+		"ssh": {
+			{Fields: []ParamField{{Flag: "user", Prompt: "用户名", Default: "root", Options: "远程服务器用户名"}, {Flag: "host", Prompt: "服务器地址", Default: "192.168.1.1", Options: "IP 地址或域名"}, {Flag: "port", Prompt: "端口", Default: "22", Options: "SSH 端口号（默认22）"}, {Flag: "extra", Prompt: "额外选项", Default: "", Options: "-i key.pem 指定密钥, -p 端口"}}, Build: "ssh {extra} -p {port} {user}@{host}", Desc: "SSH 远程连接"},
+		},
+		"fdisk": {
+			{Fields: []ParamField{{Flag: "device", Prompt: "磁盘设备", Default: "/dev/sda", Options: "如 /dev/sda, /dev/nvme0n1"}, {Flag: "action", Prompt: "操作", Default: "-l", Options: "-l 列出分区表, 直接写设备名进入交互模式"}}, Build: "fdisk {action} {device}", Desc: "磁盘分区管理"},
+		},
+		"chmod": {
+			{Fields: []ParamField{{Flag: "mode", Prompt: "权限模式", Default: "755", Options: "755 rwxr-xr-x, 644 rw-r--r--, 700 rwx------, +x 加执行"}, {Flag: "target", Prompt: "目标文件", Default: "script.sh", Options: "文件或目录路径"}, {Flag: "recursive", Prompt: "递归", Default: "", Options: "-R 递归子目录, 留空仅当前"}}, Build: "chmod {recursive} {mode} {target}", Desc: "修改文件权限"},
+		},
+		"find": {
+			{Fields: []ParamField{{Flag: "path", Prompt: "搜索路径", Default: "/", Options: "起始目录"}, {Flag: "name", Prompt: "文件名模式", Default: "*.log", Options: "支持通配符 *.log, *test*, 名称"}, {Flag: "type", Prompt: "文件类型", Default: "f", Options: "f 普通文件, d 目录, l 链接"}, {Flag: "action", Prompt: "找到后执行", Default: "", Options: "-delete 删除, -exec cmd {} \\; 执行命令"}}, Build: "find {path} -name '{name}' -type {type} {action}", Desc: "查找文件"},
+		},
+		"grep": {
+			{Fields: []ParamField{{Flag: "pattern", Prompt: "搜索模式", Default: "error", Options: "关键词或正则表达式"}, {Flag: "path", Prompt: "搜索路径", Default: "/var/log/", Options: "文件或目录"}, {Flag: "extra", Prompt: "额外选项", Default: "-rn", Options: "-r 递归, -n 显示行号, -i 忽略大小写, -l 仅文件名"}}, Build: "grep {extra} '{pattern}' {path}", Desc: "在文件中搜索文本"},
+		},
+		"sed": {
+			{Fields: []ParamField{{Flag: "action", Prompt: "操作", Default: "s/old/new/g", Options: "s/old/new/g 替换, /pattern/d 删除行"}, {Flag: "file", Prompt: "目标文件", Default: "file.txt", Options: "文件路径"}, {Flag: "inplace", Prompt: "原地修改", Default: "-i", Options: "-i 直接修改, 留空预览结果"}}, Build: "sed {inplace} '{action}' {file}", Desc: "文本替换和编辑"},
+		},
+		"docker": {
+			{Fields: []ParamField{{Flag: "image", Prompt: "镜像名称", Default: "nginx:latest", Options: "镜像名:标签"}, {Flag: "port", Prompt: "端口映射", Default: "-p 80:80", Options: "-p 宿主机:容器端口, 留空不映射"}, {Flag: "name", Prompt: "容器名称", Default: "--name myapp", Options: "--name 名称, --rm 退出自动删除"}, {Flag: "extra", Prompt: "额外选项", Default: "-d", Options: "-d 后台, -it 交互, -v 卷挂载"}}, Build: "docker run {extra} {name} {port} {image}", Desc: "创建并运行容器"},
+		},
+	}
+	if steps, ok := data[name]; ok {
+		b, _ := json.Marshal(steps)
+		return string(b)
+	}
+	return "[]"
+}
+
+func (a *App) GetBeginnerPath() string {
+	data := []map[string]interface{}{
+		{"day": 1, "title": "文件和目录操作", "desc": "学会浏览、创建、复制、移动和删除文件与目录，这是使用 Linux 的基础", "cmds": []string{"ls", "cd", "pwd", "mkdir", "touch", "cp", "mv", "rm"}},
+		{"day": 2, "title": "查看文件内容", "desc": "掌握多种查看文件内容的方式，能快速定位需要的信息", "cmds": []string{"cat", "less", "more", "head", "tail", "wc", "file"}},
+		{"day": 3, "title": "搜索和查找", "desc": "学会在文件系统和文件内容中快速搜索信息", "cmds": []string{"find", "grep", "which", "locate"}},
+		{"day": 4, "title": "系统信息查看", "desc": "了解你的系统：CPU、内存、磁盘、进程等基本信息查看", "cmds": []string{"uname", "lscpu", "free", "df", "du", "ps", "top", "uptime"}},
+		{"day": 5, "title": "用户和权限管理", "desc": "理解 Linux 权限模型，学会管理用户和文件权限", "cmds": []string{"whoami", "id", "sudo", "chmod", "chown", "passwd", "useradd", "groups"}},
+		{"day": 6, "title": "软件包管理", "desc": "学会安装、卸载和更新软件，根据你的发行版选择对应命令", "cmds": []string{"apt", "dpkg", "yum", "dnf", "pacman", "pip", "npm"}},
+		{"day": 7, "title": "网络操作", "desc": "掌握基本的网络诊断和文件传输命令", "cmds": []string{"ping", "curl", "wget", "ssh", "scp", "ip", "nslookup"}},
+		{"day": 8, "title": "压缩与归档", "desc": "学会打包和解压各种格式的压缩文件", "cmds": []string{"tar", "gzip", "zip", "unzip"}},
+		{"day": 9, "title": "进程和服务管理", "desc": "管理运行中的进程和系统服务", "cmds": []string{"kill", "killall", "systemctl", "journalctl", "crontab", "nohup"}},
+		{"day": 10, "title": "文本处理和 Shell 技巧", "desc": "掌握高效的文本处理命令和 Shell 使用技巧", "cmds": []string{"sed", "awk", "sort", "diff", "alias", "export", "history", "xargs", "|", ">"}},
+		{"day": 11, "title": "磁盘和存储管理", "desc": "学会查看磁盘使用情况、挂载设备和检查磁盘健康", "cmds": []string{"lsblk", "blkid", "mount", "umount", "fdisk", "df", "du"}},
+		{"day": 12, "title": "Docker 容器入门", "desc": "了解容器技术，学会运行和管理 Docker 容器", "cmds": []string{"docker run", "docker ps", "docker images", "docker pull", "docker exec", "docker logs"}},
+		{"day": 13, "title": "Git 版本控制", "desc": "学会使用 Git 管理代码版本，这是开发必备技能", "cmds": []string{"git init", "git clone", "git add", "git commit", "git push", "git pull", "git status", "git log"}},
+		{"day": 14, "title": "综合实战", "desc": "用学到的知识完成一个真实任务：部署一个 Web 服务", "cmds": []string{"ssh", "apt", "systemctl", "docker", "git", "curl", "tail"}},
+	}
+	b, _ := json.Marshal(data)
+	return string(b)
+}
+
 func (a *App) GetChineseSearchMap() string {
 	m := map[string][]string{
 		"查看": {"ls","cat","less","more","head","tail","ps","top","htop","free","df","du","uptime","neofetch","lscpu","lspci","lsusb","lsblk","ip","nmcli","ss","netstat","dmesg","journalctl","systemctl status","docker ps","docker logs","docker images","git status","git log","git diff","history","which","whoami","id","groups","blkid","pwd","uname","hostnamectl","timedatectl","nslookup","dig","traceroute","nmap","tcpdump"},

@@ -30,6 +30,10 @@ export function GetAllNotes() {
   return window['go']['main']['App']['GetAllNotes']();
 }
 
+export function GetBeginnerPath() {
+  return window['go']['main']['App']['GetBeginnerPath']();
+}
+
 export function GetCategories() {
   return window['go']['main']['App']['GetCategories']();
 }
@@ -48,6 +52,10 @@ export function GetDistroInfo() {
 
 export function GetDockerContainers() {
   return window['go']['main']['App']['GetDockerContainers']();
+}
+
+export function GetGuidedSteps(arg1) {
+  return window['go']['main']['App']['GetGuidedSteps'](arg1);
 }
 
 export function GetGuides() {

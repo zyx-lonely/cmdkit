@@ -16,6 +16,8 @@ export function FetchURL(arg1:string):Promise<main.FetchResult>;
 
 export function GetAllNotes():Promise<string>;
 
+export function GetBeginnerPath():Promise<string>;
+
 export function GetCategories():Promise<Array<main.Category>>;
 
 export function GetChineseSearchMap():Promise<string>;
@@ -25,6 +27,8 @@ export function GetCurrentDistro():Promise<string>;
 export function GetDistroInfo():Promise<main.DistroInfo>;
 
 export function GetDockerContainers():Promise<string>;
+
+export function GetGuidedSteps(arg1:string):Promise<string>;
 
 export function GetGuides():Promise<Array<main.GuideCategory>>;
 

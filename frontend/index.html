@@ -46,6 +46,7 @@
                     </select>
                 </div>
                 <button id="btn-all" class="cat-btn active">📋 全部命令</button>
+                <button id="btn-beginner" class="cat-btn">🌱 新手入门</button>
                 <button id="btn-guides" class="cat-btn">📖 安装指南</button>
                 <button id="btn-sysinfo" class="cat-btn">🖥️ 系统信息</button>
             </div>
@@ -158,10 +159,19 @@
         </div>
     </div>
 
+    <!-- Guided Mode -->
+    <div id="guided-overlay">
+        <div id="guided-dialog">
+            <div id="guided-header"><h3>🧭 分步引导</h3><button id="guided-close">✕</button></div>
+            <div class="guided-body"></div>
+        </div>
+    </div>
+
     <!-- More Menu -->
     <div id="more-menu" style="display:none">
         <button id="menu-aliases">📌 别名管理</button>
         <button id="menu-pm">📦 包管理速查</button>
+        <button id="menu-pdf">📄 导出收藏为 PDF</button>
         <button id="menu-color">🎨 主题色</button>
         <button id="menu-export">📤 导出数据</button>
     </div>

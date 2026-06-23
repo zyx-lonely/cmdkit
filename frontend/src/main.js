@@ -1,4 +1,4 @@
-import { GetCategories, GetGuides, ExecuteCommand, CancelExecution, GetChineseSearchMap, GetSystemInfo, FetchURL, SaveNote, GetNote, GetAllNotes, ImportNotes, GetDockerContainers, DockerAction, DockerLogs, GetSysStats, TestSSH, GetCurrentDistro, GetDistroInfo } from '../wailsjs/go/main/App.js'
+import { GetCategories, GetGuides, ExecuteCommand, CancelExecution, GetChineseSearchMap, GetSystemInfo, FetchURL, SaveNote, GetNote, GetAllNotes, ImportNotes, GetDockerContainers, DockerAction, DockerLogs, GetSysStats, TestSSH, GetCurrentDistro, GetDistroInfo, GetGuidedSteps, GetBeginnerPath } from '../wailsjs/go/main/App.js'
 
 let allCategories = []
 let allGuides = []
@@ -29,7 +29,34 @@ let themeColor = load('themeColor', '')
 let lastSearchQuery = ''
 
 let flatCommands = []
+let searchHistory = load('searchHistory', [])
 let searchTimer = null
+
+const ERROR_SOLUTIONS = {
+  'command not found': { tip: '该命令未安装', solution: '用包管理器安装：sudo apt install <命令>（Ubuntu）或 sudo yum install <命令>（CentOS）', icon: '📦' },
+  'not found': { tip: '命令或文件不存在', solution: '检查拼写是否正确，或用 which <命令> 查看命令路径', icon: '🔍' },
+  'Permission denied': { tip: '权限不足', solution: '在命令前加 sudo 以管理员身份执行', icon: '🔒' },
+  'permission denied': { tip: '权限不足', solution: '在命令前加 sudo，或用 chmod 修改文件权限', icon: '🔒' },
+  'No such file': { tip: '文件或目录不存在', solution: '检查路径是否正确，用 ls 查看目录内容确认', icon: '📁' },
+  'No such file or directory': { tip: '文件或目录不存在', solution: '检查路径拼写，用 pwd 确认当前位置，用 ls 列出文件', icon: '📁' },
+  'Connection refused': { tip: '连接被拒绝', solution: '目标端口未开放或服务未启动，检查服务状态', icon: '🔌' },
+  'Connection timed out': { tip: '连接超时', solution: '网络不通或防火墙阻止，检查网络连接和防火墙规则，用 ping 测试', icon: '⏱️' },
+  'cannot open': { tip: '无法打开文件', solution: '检查文件是否存在及权限，用 ls -l 查看文件属性', icon: '🔒' },
+  'cannot find': { tip: '找不到', solution: '路径或名称错误，尝试用 find / -name <名称> 搜索', icon: '🔍' },
+  'Operation not permitted': { tip: '操作不允许', solution: '需要 root 权限，在命令前加 sudo', icon: '🔒' },
+  'address already in use': { tip: '端口已被占用', solution: '用 sudo lsof -i :<端口> 查看占用进程，用 sudo fuser -k <端口>/tcp 释放', icon: '🔌' },
+  'no space left': { tip: '磁盘空间不足', solution: '用 df -h 查看磁盘使用，清理日志或临时文件', icon: '💾' },
+  'not a directory': { tip: '不是目录', solution: '目标路径应是一个目录而非文件', icon: '📁' },
+  'Is a directory': { tip: '目标是目录', solution: '操作对象是目录，使用 -r 递归选项处理目录', icon: '📁' },
+  'Unknown host': { tip: '未知主机', solution: '检查域名是否拼写正确，用 nslookup 测试能否解析', icon: '🌐' },
+  'Network is unreachable': { tip: '网络不可达', solution: '检查网络连接，用 ip addr 查看网卡状态，用 ping 测试网关', icon: '🌐' },
+  'File exists': { tip: '文件已存在', solution: '目标文件已存在，使用 -f 强制覆盖或换个文件名', icon: '📄' },
+  'Resource busy': { tip: '资源忙', solution: '设备或文件正在被使用，用 lsof 查看占用进程', icon: '⚙️' },
+  'invalid option': { tip: '无效选项', solution: '参数拼写错误，用 --help 查看命令的正确用法', icon: '❓' },
+  'unrecognized': { tip: '无法识别的参数', solution: '参数不支持，用 --help 查看可用选项', icon: '❓' },
+  'segmentation fault': { tip: '程序崩溃（段错误）', solution: '可能是软件 bug 或系统兼容问题，尝试更新到最新版本', icon: '💥' },
+  'Killed': { tip: '进程被杀死', solution: '系统内存不足（OOM Killer），用 free -h 查看内存', icon: '💥' },
+}
 
 const DANGEROUS_CMDS = ['rm -rf', 'mkfs', 'dd if=', 'shutdown', 'halt', 'reboot', 'poweroff', 'init 0', 'init 6', ':(){ :|:& };:', 'mv /', 'chmod -R 000', '> /dev/sda', 'format', 'fdisk', 'parted']
 
@@ -190,6 +217,7 @@ function renderView() {
     docker: renderDocker,
     ssh: renderSSH,
     aliases: renderAliases,
+    beginner: renderBeginnerPath,
   }
   if (views[activeView]) views[activeView]()
   updateButtonStates()
@@ -208,6 +236,7 @@ function updateButtonStates() {
     else $('#btn-all').classList.add('active')
   } else if (activeView === 'guides') $('#btn-guides').classList.add('active')
   else if (activeView === 'sysinfo') $('#btn-sysinfo').classList.add('active')
+  else if (activeView === 'beginner') $('#btn-beginner').classList.add('active')
   $('#btn-docker').classList.toggle('active', activeView === 'docker')
   $('#btn-ssh').classList.toggle('active', activeView === 'ssh')
   $$('#category-list button').forEach(b => b.classList.toggle('active', parseInt(b.dataset.idx) === activeCategory))
@@ -261,13 +290,16 @@ function renderCommandCards(grid, cmds, emptyIcon) {
     const hlq = lastSearchQuery
     const hlName = hlq ? highlightText(cmd.name, hlq) : cmd.name
     const hlDesc = hlq && cmd.desc ? highlightText(cmd.desc, hlq) : cmd.desc
+    const hasGuide = ['dd','rsync','tar','ssh','fdisk','chmod','find','grep','sed','docker'].includes(cmd.name)
     html += `<div class="cmd-card ${isMatch ? '' : 'cmd-foreign'}">
       <div class="cmd-header">
         <span class="cmd-name" data-cmd="${cmd.name}" data-syntax="${cmd.syntax || ''}">${hlName}</span>
         <div class="cmd-actions">
           ${cmd.syntax ? `<button class="cmd-btn run" data-cmd="${cmd.name}" data-syntax="${cmd.syntax}">▶ 执行</button>` : ''}
+          ${hasGuide ? `<button class="cmd-btn guide-btn" data-cmd="${cmd.name}" title="分步引导">🧭</button>` : ''}
           <button class="cmd-btn note-btn" data-cmd="${cmd.name}">📝</button>
           <button class="cmd-btn ${f ? 'faved' : ''}" data-cmd="${cmd.name}">${f ? '★' : '☆'}</button>
+          <button class="cmd-btn share-btn" data-cmd="${cmd.name}" data-syntax="${cmd.syntax || ''}" title="分享">📤</button>
         </div>
       </div>
       <div class="cmd-meta">
@@ -277,7 +309,10 @@ function renderCommandCards(grid, cmds, emptyIcon) {
       </div>
       ${hlDesc ? `<div class="cmd-desc">${hlDesc}</div>` : ''}
       ${cmd.syntax ? `<div class="cmd-syntax">$ ${cmd.syntax}</div>` : ''}
-      ${cmd.examples && cmd.examples.length ? `<div class="cmd-examples">${cmd.examples.map(e => `<div class="cmd-example" title="点击复制">$ ${e}</div>`).join('')}</div>` : ''}
+      ${cmd.examples && cmd.examples.length ? `<div class="cmd-examples">${cmd.examples.map(e => {
+        const tip = parseExampleTip(e, cmd.name)
+        return `<div class="cmd-example" title="${tip}">$ ${e}</div>`
+      }).join('')}</div>` : ''}
       ${cmd.altFor ? `<div class="cmd-altnote">💡 ${cmd.altFor}</div>` : ''}
       ${related.length ? `<div class="cmd-related">🔗 相关: ${related.map(r => `<span class="related-tag" data-cmd="${r}">${r}</span>`).join(' ')}</div>` : ''}
       ${note ? `<div class="cmd-note-preview">📌 ${note}</div>` : ''}
@@ -293,11 +328,17 @@ function renderCommandCards(grid, cmds, emptyIcon) {
   grid.querySelectorAll('.cmd-btn.run').forEach(el => {
     el.addEventListener('click', () => openExec(el.dataset.syntax))
   })
+  grid.querySelectorAll('.guide-btn').forEach(el => {
+    el.addEventListener('click', () => openGuided(el.dataset.cmd))
+  })
   grid.querySelectorAll('.note-btn').forEach(el => {
     el.addEventListener('click', () => openNote(el.dataset.cmd))
   })
-  grid.querySelectorAll('.cmd-btn.faved, .cmd-btn:not(.run):not(.note-btn)').forEach(el => {
-    if (el.classList.contains('run') || el.classList.contains('note-btn')) return
+  grid.querySelectorAll('.share-btn').forEach(el => {
+    el.addEventListener('click', () => shareCommand(el.dataset.cmd, el.dataset.syntax))
+  })
+  grid.querySelectorAll('.cmd-btn.faved, .cmd-btn:not(.run):not(.note-btn):not(.guide-btn):not(.share-btn)').forEach(el => {
+    if (el.classList.contains('run') || el.classList.contains('note-btn') || el.classList.contains('guide-btn') || el.classList.contains('share-btn')) return
     el.addEventListener('click', () => toggleFav(el.dataset.cmd))
   })
   grid.querySelectorAll('.cmd-example').forEach(el => {
@@ -319,6 +360,45 @@ function searchFor(q) {
   const inp = $('#search-input')
   inp.value = q
   if (activeView === 'commands') renderCommands()
+}
+
+async function renderBeginnerPath() {
+  const grid = $('#commands-grid')
+  grid.style.display = 'grid'
+  grid.style.gridTemplateColumns = '1fr'
+  $('#view-title').textContent = '📚 新手必学 · 14 天学习计划'
+  try {
+    const raw = await GetBeginnerPath()
+    const days = JSON.parse(raw)
+    let html = '<div class="bp-intro">按照每天一个主题的顺序学习，覆盖 Linux 日常使用最核心的命令</div>'
+    days.forEach(d => {
+      const isComplete = d.cmds.every(c => favs.includes(c))
+      html += `<details class="bp-card ${isComplete ? 'bp-done' : ''}">
+        <summary class="bp-header"><span class="bp-day">第 ${d.day} 天</span> <span class="bp-title">${d.title}</span> <span class="bp-status">${isComplete ? '✅ 已完成' : `${d.cmds.length} 个命令`}</span></summary>
+        <div class="bp-body">
+          <p class="bp-desc">${d.desc}</p>
+          <div class="bp-cmds">${d.cmds.map(c => {
+            const found = flatCommands.find(f => f.name === c)
+            return found ? `<span class="bp-cmd" data-cmd="${c}">${c}</span>` : `<span class="bp-cmd" data-cmd="${c}">${c}</span>`
+          }).join('')}</div>
+        </div>
+      </details>`
+    })
+    grid.innerHTML = html
+    grid.querySelectorAll('.bp-cmd').forEach(el => {
+      el.addEventListener('click', () => {
+        const name = el.dataset.cmd
+        const found = flatCommands.find(c => c.name === name)
+        if (found) {
+          activeView = 'commands'
+          searchFor(name)
+        }
+      })
+    })
+  } catch (e) {
+    grid.innerHTML = `<div class="empty-box"><p>加载学习计划失败</p></div>`
+  }
+  $('#view-count').textContent = ''
 }
 
 function highlightText(text, query) {
@@ -346,7 +426,10 @@ async function renderGuides() {
     html += `<div class="guide-card">
       <div class="guide-header"><span class="guide-title">${g.name}</span></div>
       ${g.description ? `<div class="guide-subtitle">${g.description}</div>` : ''}
-      <div class="guide-steps">${(g.steps || []).map(s => `<div class="guide-step">${s}</div>`).join('')}</div>
+      <div class="guide-steps">${(g.steps || []).map(s => {
+        const cmd = s.replace(/^#.*$/, '').trim()
+        return `<div class="guide-step"><span class="guide-step-text">${s}</span>${cmd ? `<button class="cmd-btn guide-run" data-cmd="${cmd}">▶ 执行</button>` : ''}</div>`
+      }).join('')}</div>
       ${g.tips ? `<div class="guide-tip">💡 ${g.tips}</div>` : ''}
       ${g.note ? `<div class="guide-note">⚠️ ${g.note}</div>` : ''}
     </div>`
@@ -369,7 +452,17 @@ function bindGuideEvents(container) {
     })
   }
   container.querySelectorAll('.guide-step').forEach(el => {
-    el.addEventListener('click', () => copyText(el.textContent.trim()))
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.guide-run')) return
+      copyText(el.querySelector('.guide-step-text')?.textContent?.trim() || el.textContent.trim())
+    })
+  })
+  container.querySelectorAll('.guide-run').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const cmd = el.dataset.cmd
+      if (cmd) openExec(cmd)
+    })
   })
 }
 
@@ -808,8 +901,143 @@ function exportData() {
 }
 
 // --- Copy ---
+function parseExampleTip(example, cmdName) {
+  const parts = example.split('  # ')
+  if (parts.length > 1) return parts[1]
+  const hashIdx = example.indexOf('  # ')
+  if (hashIdx > 0) return example.substring(hashIdx + 4)
+  if (cmdName) {
+    const afterCmd = example.replace(cmdName, '').trim()
+    const commonTips = {
+      '-a': '显示全部（含隐藏文件）',
+      '-l': '详细列表格式',
+      '-r': '递归处理子目录',
+      '-f': '强制操作',
+      '-v': '显示详细信息',
+      '-h': '人类可读格式',
+      '--help': '显示帮助信息',
+      '-i': '交互模式/忽略大小写',
+      '-u': '仅更新',
+      '-d': '后台运行',
+      '-p': '指定端口',
+      '-t': '指定类型',
+      '-n': '指定数量',
+      '-o': '输出到文件',
+      '-c': '显示计数',
+      '-s': '排序/大小',
+    }
+    for (const [flag, tip] of Object.entries(commonTips)) {
+      if (afterCmd.includes(flag)) return tip
+    }
+  }
+  return '点击复制此命令'
+}
+
 function copyText(t) {
   navigator.clipboard.writeText(t).then(() => toast('已复制: ' + t.substring(0, 50)))
+}
+
+// --- Guided Mode ---
+async function openGuided(cmdName) {
+  const raw = await GetGuidedSteps(cmdName)
+  const steps = JSON.parse(raw)
+  if (!steps || !steps.length) { toast('该命令暂不支持引导模式'); return }
+  const overlay = $('#guided-overlay')
+  const body = overlay.querySelector('.guided-body')
+  overlay.dataset.step = '0'
+  overlay.dataset.steps = JSON.stringify(steps)
+  overlay.classList.add('show')
+  renderGuidedStep(0, steps)
+}
+function renderGuidedStep(idx, steps) {
+  if (idx >= steps.length) { toast('引导完成！'); $('#guided-overlay').classList.remove('show'); return }
+  const step = steps[idx]
+  const body = $('#guided-overlay').querySelector('.guided-body')
+  let html = `<div class="guided-progress">步骤 ${idx + 1} / ${steps.length}</div>`
+  html += `<div class="guided-desc">${step.desc}</div>`
+  html += '<div class="guided-fields">'
+  step.fields.forEach((f, fi) => {
+    const val = localStorage.getItem('guided_' + f.flag) || f.default || ''
+    html += `<div class="guided-field">
+      <label>${f.prompt}</label>
+      ${f.options ? `<span class="guided-hint">${f.options}</span>` : ''}
+      <input class="guided-input" data-fi="${fi}" data-flag="${f.flag}" value="${val}" placeholder="${f.default || ''}" spellcheck="false"/>
+    </div>`
+  })
+  html += '</div>'
+  html += '<div class="guided-preview" id="guided-preview"></div>'
+  html += `<div class="guided-actions">
+    <button id="guided-prev" class="cmd-btn" ${idx === 0 ? 'disabled' : ''}>← 上一步</button>
+    <button id="guided-run" class="cmd-btn primary" style="background:var(--accent);color:#fff;border:var(--accent)">▶ 执行</button>
+    <button id="guided-next" class="cmd-btn" style="background:var(--accent);color:#fff;border:var(--accent)">下一步 →</button>
+  </div>`
+  body.innerHTML = html
+  updateGuidedPreview()
+  body.querySelectorAll('.guided-input').forEach(inp => {
+    inp.addEventListener('input', updateGuidedPreview)
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') document.getElementById('guided-run')?.click() })
+  })
+  document.getElementById('guided-prev').addEventListener('click', () => {
+    const i = parseInt($('#guided-overlay').dataset.step)
+    if (i > 0) { $('#guided-overlay').dataset.step = String(i - 1); renderGuidedStep(i - 1, steps) }
+  })
+  document.getElementById('guided-next').addEventListener('click', () => {
+    const i = parseInt($('#guided-overlay').dataset.step)
+    if (i < steps.length - 1) { $('#guided-overlay').dataset.step = String(i + 1); renderGuidedStep(i + 1, steps) }
+  })
+  document.getElementById('guided-run').addEventListener('click', () => {
+    const preview = document.getElementById('guided-preview').textContent
+    if (preview) { $('#guided-overlay').classList.remove('show'); openExec(preview) }
+  })
+}
+function updateGuidedPreview() {
+  const inputs = document.querySelectorAll('.guided-input')
+  let build = ''
+  const steps = JSON.parse($('#guided-overlay').dataset.steps || '[]')
+  const idx = parseInt($('#guided-overlay').dataset.step) || 0
+  if (steps[idx]) {
+    build = steps[idx].build
+    inputs.forEach(inp => {
+      const flag = inp.dataset.flag
+      const val = inp.value.trim()
+      localStorage.setItem('guided_' + flag, val)
+      build = build.replaceAll('{' + flag + '}', val || '')
+    })
+    build = build.replace(/\s+/g, ' ').trim()
+  }
+  document.getElementById('guided-preview').textContent = build ? '$ ' + build : '(填写参数后预览)'
+}
+
+// --- Search History ---
+function addSearchHistory(q) {
+  if (!q) return
+  searchHistory = searchHistory.filter(s => s !== q)
+  searchHistory.unshift(q)
+  if (searchHistory.length > 10) searchHistory = searchHistory.slice(0, 10)
+  save('searchHistory', searchHistory)
+}
+function renderSearchHistory() {
+  const drop = $('#search-suggest')
+  if (!searchHistory.length || $('#search-input').value.trim()) { return }
+  drop.style.display = 'block'
+  drop.innerHTML = '<div style="padding:6px 10px;font-size:10px;color:var(--fg2);border-bottom:1px solid var(--border)">🕐 搜索历史</div>' +
+    searchHistory.map((s, i) =>
+      `<div class="sug-item" data-idx="${i}" style="justify-content:flex-start;gap:8px"><span style="color:var(--fg2)">🕐</span><span>${s}</span></div>`
+    ).join('')
+  drop.querySelectorAll('.sug-item').forEach(el => {
+    el.addEventListener('mousedown', (e) => {
+      e.preventDefault()
+      $('#search-input').value = searchHistory[parseInt(el.dataset.idx)]
+      drop.style.display = 'none'
+      renderCommands()
+    })
+  })
+}
+
+// --- Share Command ---
+function shareCommand(name, syntax) {
+  const text = `🐧 Linux 命令分享\n━━━━━━━━━━━━━━━\n命令: ${name}\n用法: ${syntax || '无'}\n━━━━━━━━━━━━━━━\n来自 Linux 命令工具箱`
+  navigator.clipboard.writeText(text).then(() => toast('命令信息已复制，可分享给好友'))
 }
 
 // --- Toast ---
@@ -896,6 +1124,11 @@ function bindEvents() {
     activeView = 'commands'; activeCategory = -1
     renderView(); renderCategories()
   })
+  $('#btn-beginner').addEventListener('click', () => {
+    stopAllTimers()
+    activeView = 'beginner'
+    renderView()
+  })
   $('#btn-guides').addEventListener('click', () => {
     stopAllTimers()
     activeView = 'guides'
@@ -944,16 +1177,27 @@ function bindEvents() {
     $('#more-menu').style.display = 'none'
     exportData()
   })
+  $('#menu-pdf').addEventListener('click', () => {
+    $('#more-menu').style.display = 'none'
+    exportPDF()
+  })
 
   // Search (debounced)
   $('#search-input').addEventListener('input', () => {
     if (searchTimer) clearTimeout(searchTimer)
     searchTimer = setTimeout(() => {
-      if (activeView === 'commands') renderCommands()
+      if (activeView === 'commands') {
+        const q = $('#search-input').value.trim()
+        if (q) addSearchHistory(q)
+        renderCommands()
+      }
       renderSuggestions()
     }, 150)
   })
-  $('#search-input').addEventListener('focus', renderSuggestions)
+  $('#search-input').addEventListener('focus', () => {
+    if (!$('#search-input').value.trim()) renderSearchHistory()
+    else renderSuggestions()
+  })
   $('#search-input').addEventListener('blur', () => setTimeout(() => { $('#search-suggest').style.display = 'none' }, 200))
 
   // Exec dialog
@@ -1037,14 +1281,24 @@ function bindEvents() {
     if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
       e.preventDefault(); $('#search-input').focus()
     }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'l' || e.key === 'L')) {
+      e.preventDefault(); $('#search-input').focus(); $('#search-input').select()
+    }
     if (e.key === 'Escape') {
       if ($('#exec-overlay').classList.contains('show')) $('#exec-overlay').classList.remove('show')
       if ($('#note-overlay').classList.contains('show')) $('#note-overlay').classList.remove('show')
       if ($('#color-overlay').classList.contains('show')) $('#color-overlay').classList.remove('show')
       if ($('#sshedit-overlay').classList.contains('show')) $('#sshedit-overlay').classList.remove('show')
       if ($('#alias-overlay').classList.contains('show')) $('#alias-overlay').classList.remove('show')
+      if ($('#guided-overlay').classList.contains('show')) $('#guided-overlay').classList.remove('show')
       $('#more-menu').style.display = 'none'
     }
+  })
+
+  // Guided overlay
+  $('#guided-close').addEventListener('click', () => $('#guided-overlay').classList.remove('show'))
+  $('#guided-overlay').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) $('#guided-overlay').classList.remove('show')
   })
 }
 
@@ -1102,6 +1356,10 @@ function renderExecOutput(cmd, res, elapsed) {
   }
   if (res.error) {
     html += `<div class="exec-stderr">${escapeHtml(res.error)}</div>`
+    const solution = findErrorSolution(res.error)
+    if (solution) {
+      html += `<div class="exec-solution">${solution.icon} <strong>${solution.tip}</strong><br>💡 ${solution.solution}</div>`
+    }
   }
   if (!res.output && !res.error) {
     html += '<div class="exec-info">(空输出)</div>'
@@ -1113,6 +1371,15 @@ function renderExecOutput(cmd, res, elapsed) {
   el.innerHTML = html
   el.scrollTop = el.scrollHeight
   $('#exec-copy').style.display = 'inline-block'
+}
+
+function findErrorSolution(errMsg) {
+  if (!errMsg) return null
+  const lower = errMsg.toLowerCase()
+  for (const [key, val] of Object.entries(ERROR_SOLUTIONS)) {
+    if (lower.includes(key.toLowerCase())) return val
+  }
+  return null
 }
 
 function highlightOutput(text) {
@@ -1230,6 +1497,41 @@ function showPMCompare() {
     })
   })
   $('#view-count').textContent = ''
+}
+
+function exportPDF() {
+  if (!favs.length) { toast('没有收藏的命令，先添加收藏吧'); return }
+  const cmds = flatCommands.filter(c => favs.includes(c.name))
+  let html = `<html><head><meta charset="utf-8"><style>
+    body{font-family:system-ui,sans-serif;padding:20px;color:#222}
+    h1{font-size:20px;margin-bottom:4px}
+    .sub{color:#666;font-size:12px;margin-bottom:16px}
+    .card{border:1px solid #ddd;border-radius:6px;padding:10px 14px;margin-bottom:8px;page-break-inside:avoid}
+    .name{font-size:14px;font-weight:700;color:#5c3cfc;font-family:monospace}
+    .desc{font-size:11px;color:#666;margin:3px 0}
+    .syntax{background:#f5f5f5;padding:4px 8px;border-radius:4px;font-family:monospace;font-size:11px}
+    .ex{color:#388e3c;font-family:monospace;font-size:10px;margin:2px 0}
+    hr{border:none;border-top:1px solid #eee;margin:16px 0}
+  </style></head><body>
+  <h1>🐧 Linux 命令速查表</h1>
+  <div class="sub">共 ${cmds.length} 条收藏命令 · 导出时间 ${new Date().toLocaleString('zh-CN')}</div>
+  <hr>`
+  cmds.forEach(c => {
+    html += `<div class="card"><div class="name">${c.name}</div>`
+    if (c.desc) html += `<div class="desc">${c.desc}</div>`
+    if (c.syntax) html += `<div class="syntax">$ ${c.syntax}</div>`
+    if (c.examples) html += c.examples.map(e => `<div class="ex">$ ${e}</div>`).join('')
+    html += '</div>'
+  })
+  html += '</body></html>'
+  const win = window.open('', '_blank')
+  if (win) {
+    win.document.write(html)
+    win.document.close()
+    setTimeout(() => { win.print() }, 500)
+  } else {
+    toast('请允许弹出窗口以导出 PDF')
+  }
 }
 
 function showFavorites() {
